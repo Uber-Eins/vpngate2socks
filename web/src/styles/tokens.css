@@ -1,0 +1,28 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+  color: #edf3f1;
+  background: #080c0f;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  --background: #080c0f;
+  --surface: #0d1317;
+  --surface-raised: #111a1f;
+  --surface-hover: #152128;
+  --surface-soft: #0a1014;
+  --line: #223038;
+  --line-strong: #34464f;
+  --text: #edf3f1;
+  --text-soft: #b6c3c0;
+  --muted: #7e908d;
+  --accent: #8ce0ba;
+  --accent-strong: #b3f3d5;
+  --accent-ink: #06150f;
+  --blue: #77bcea;
+  --warning: #e5b566;
+  --danger: #f28a8a;
+  --danger-soft: #2a1619;
+  --success-soft: #10241d;
+  --shadow: 0 22px 70px rgb(0 0 0 / 28%);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}

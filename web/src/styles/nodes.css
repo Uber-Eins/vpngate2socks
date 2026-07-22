@@ -1,0 +1,467 @@
+.node-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  background: rgb(13 19 23 / 90%);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 16%);
+}
+
+.node-table {
+  width: 100%;
+  min-width: 1220px;
+  border-collapse: collapse;
+}
+
+.node-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 12px 15px;
+  border-bottom: 1px solid var(--line-strong);
+  color: var(--muted);
+  background: #0b1115;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.node-table td {
+  height: 112px;
+  padding: 15px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+
+.node-row {
+  transition: background-color 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+
+.node-row:last-child td {
+  border-bottom: 0;
+}
+
+.node-row--active {
+  background: rgb(140 224 186 / 4.5%);
+  box-shadow: inset 2px 0 var(--accent);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .node-row:hover {
+    background: rgb(119 188 234 / 3.5%);
+  }
+
+  .node-row--active:hover {
+    background: rgb(140 224 186 / 6.5%);
+  }
+}
+
+.node-identity {
+  display: flex;
+  min-width: 250px;
+  gap: 11px;
+  align-items: center;
+}
+
+.country-code {
+  display: grid;
+  width: 34px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgb(140 224 186 / 22%);
+  color: var(--accent);
+  background: rgb(140 224 186 / 6%);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+}
+
+.node-identity > div {
+  min-width: 0;
+}
+
+.node-identity strong,
+.node-identity code,
+.region-cell strong,
+.region-cell span,
+.quality-cell span,
+.sessions-cell span {
+  display: block;
+}
+
+.node-identity strong {
+  max-width: 195px;
+  overflow: hidden;
+  font-size: 0.84rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-identity code {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+
+.active-badge {
+  align-self: flex-start;
+  border: 1px solid rgb(140 224 186 / 26%);
+  padding: 2px 5px;
+  color: var(--accent);
+  background: var(--success-soft);
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.53rem;
+  letter-spacing: 0.08em;
+}
+
+.region-cell,
+.quality-cell,
+.sessions-cell {
+  min-width: 120px;
+}
+
+.region-cell strong,
+.quality-cell strong,
+.sessions-cell strong {
+  font-size: 0.82rem;
+}
+
+.region-cell span,
+.quality-cell span,
+.sessions-cell span {
+  max-width: 145px;
+  overflow: hidden;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.69rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quality-cell small {
+  display: block;
+  margin-top: 4px;
+  color: #61716f;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.59rem;
+}
+
+.risk-cell {
+  width: 270px;
+}
+
+.risk-summary {
+  width: 238px;
+}
+
+.risk-summary__score {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.risk-summary__score > span {
+  color: var(--muted);
+  font-size: 0.67rem;
+}
+
+.risk-number {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.risk-number--low { color: var(--accent); }
+.risk-number--medium { color: var(--warning); }
+.risk-number--high { color: var(--danger); }
+
+.risk-meter {
+  height: 3px;
+  margin: 7px 0 9px;
+  overflow: hidden;
+  background: #283339;
+}
+
+.risk-meter__fill {
+  display: block;
+  height: 100%;
+  transition: width 220ms var(--ease-out);
+}
+
+.risk-meter__fill--low { background: var(--accent); }
+.risk-meter__fill--medium { background: var(--warning); }
+.risk-meter__fill--high { background: var(--danger); }
+
+.risk-tags {
+  display: flex;
+  gap: 5px;
+}
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 0.59rem;
+  white-space: nowrap;
+}
+
+.tag--good {
+  border-color: rgb(140 224 186 / 20%);
+  color: var(--accent);
+  background: rgb(140 224 186 / 5%);
+}
+
+.tag--warn {
+  border-color: rgb(229 181 102 / 22%);
+  color: var(--warning);
+  background: rgb(229 181 102 / 6%);
+}
+
+.risk-summary__meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 0.6rem;
+}
+
+.risk-summary__meta code,
+.risk-summary__meta time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.test-progress,
+.auto-test-state {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 190px;
+}
+
+.test-progress strong,
+.test-progress span,
+.auto-test-state strong,
+.auto-test-state span {
+  display: block;
+}
+
+.test-progress strong,
+.auto-test-state strong {
+  color: var(--warning);
+  font-size: 0.74rem;
+}
+
+.test-progress div > span,
+.auto-test-state div > span {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.activity-spinner {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  border: 1.5px solid rgb(229 181 102 / 22%);
+  border-top-color: var(--warning);
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+}
+
+.test-error {
+  display: grid;
+  max-width: 230px;
+  gap: 5px;
+}
+
+.test-error strong {
+  color: var(--danger);
+  font-size: 0.73rem;
+}
+
+.test-error span {
+  overflow: hidden;
+  color: #cb9393;
+  font-size: 0.65rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.test-error time,
+.empty-value {
+  color: var(--muted);
+  font-size: 0.63rem;
+}
+
+.row-actions {
+  display: grid;
+  width: 112px;
+  gap: 7px;
+}
+
+.row-actions .button {
+  width: 100%;
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-top: 0;
+  padding: 12px 14px;
+  color: var(--muted);
+  background: rgb(13 19 23 / 82%);
+  font-size: 0.72rem;
+}
+
+.pagination > span strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination__position,
+.pagination__position > div {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.empty-state {
+  display: grid;
+  min-height: 320px;
+  place-items: center;
+  align-content: center;
+  gap: 11px;
+  border: 1px solid var(--line);
+  color: var(--text-soft);
+  background: rgb(13 19 23 / 78%);
+  text-align: center;
+}
+
+.empty-state > span {
+  width: 30px;
+  height: 30px;
+  border: 1px dashed var(--line-strong);
+  transform: rotate(45deg);
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+  .node-table-wrap {
+    overflow: visible;
+  }
+
+  .node-table {
+    display: block;
+    min-width: 0;
+  }
+
+  .node-table thead {
+    display: none;
+  }
+
+  .node-table tbody {
+    display: grid;
+  }
+
+  .node-table .node-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--line-strong);
+    padding: 17px 14px;
+  }
+
+  .node-table .node-row:last-child {
+    border-bottom: 0;
+  }
+
+  .node-table td {
+    display: block;
+    width: auto;
+    height: auto;
+    border: 0;
+    padding: 10px 8px;
+  }
+
+  .node-table td:first-child,
+  .node-table .risk-cell,
+  .node-table td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .node-table td:first-child {
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .node-table td:nth-child(2)::before,
+  .node-table td:nth-child(3)::before,
+  .node-table .risk-cell::before {
+    display: block;
+    margin-bottom: 8px;
+    color: var(--muted);
+    font-size: 0.59rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .node-table td:nth-child(2)::before { content: "地区"; }
+  .node-table td:nth-child(3)::before { content: "质量"; }
+  .node-table .risk-cell::before { content: "IPPURE 风险"; }
+
+  .node-identity,
+  .region-cell,
+  .quality-cell,
+  .risk-summary,
+  .test-progress,
+  .auto-test-state {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .node-identity strong {
+    max-width: min(220px, 58vw);
+  }
+
+  .risk-cell {
+    margin-top: 3px;
+    border-top: 1px solid var(--line) !important;
+    padding-top: 14px !important;
+  }
+
+  .row-actions {
+    display: flex;
+    width: 100%;
+  }
+
+  .row-actions .button {
+    flex: 1;
+  }
+
+  .node-table .optional-column {
+    display: none;
+  }
+
+  .pagination {
+    gap: 12px;
+  }
+}

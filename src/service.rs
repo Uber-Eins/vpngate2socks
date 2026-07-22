@@ -17,6 +17,7 @@ use tokio::sync::{RwLock, Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    automatic_tests::{AutomaticTestCandidate, select_automatic_tests},
     config::AppConfig,
     domain::{
         AppEvent, ConnectionState, NodeAvailability, NodeId, OperationId, ResolvedUpstreamEndpoint,
@@ -26,6 +27,7 @@ use crate::{
     quality::fetch_ippure,
     socks::{UpstreamProbeError, probe_upstream},
     storage::{Store, StoreError},
+    test_registry::{QueueRegistration, TestRegistry},
     vpngate::{CsvLimits, ParseStats, VpnGateError, fetch_snapshot},
 };
 
@@ -48,8 +50,9 @@ struct Inner {
     connection_state: watch::Sender<ConnectionState>,
     active_worker: watch::Sender<Option<PathBuf>>,
     connection_commands: mpsc::Sender<ConnectionCommand>,
-    operations: RwLock<HashMap<OperationId, TestState>>,
+    test_registry: RwLock<TestRegistry>,
     test_queue: mpsc::Sender<TestJob>,
+    automatic_test_trigger: mpsc::Sender<()>,
     queued_tests: AtomicUsize,
     running_tests: AtomicUsize,
     upstream_state: watch::Sender<UpstreamState>,
@@ -154,6 +157,7 @@ impl AppState {
         let (upstream_state, _) = watch::channel(UpstreamState::Checking);
         let (connection_commands, connection_rx) = mpsc::channel(8);
         let (test_queue, test_rx) = mpsc::channel(TEST_QUEUE_CAPACITY);
+        let (automatic_test_trigger, automatic_test_rx) = mpsc::channel(1);
         let (events, _) = broadcast::channel(256);
         let state = Self(Arc::new(Inner {
             config,
@@ -166,8 +170,9 @@ impl AppState {
             connection_state,
             active_worker,
             connection_commands,
-            operations: RwLock::new(HashMap::new()),
+            test_registry: RwLock::new(TestRegistry::default()),
             test_queue,
+            automatic_test_trigger,
             queued_tests: AtomicUsize::new(0),
             running_tests: AtomicUsize::new(0),
             upstream_state,
@@ -176,6 +181,7 @@ impl AppState {
         }));
         tokio::spawn(connection_actor(state.clone(), connection_rx));
         tokio::spawn(test_dispatcher(state.clone(), test_rx));
+        tokio::spawn(automatic_test_scheduler(state.clone(), automatic_test_rx));
         tokio::spawn(upstream_monitor(state.clone()));
         state
     }
@@ -248,6 +254,11 @@ impl AppState {
             .map(|node| node.id.clone())
             .collect::<HashSet<_>>();
         *self.0.nodes.write().await = Arc::new(snapshot.nodes);
+        self.0
+            .test_registry
+            .write()
+            .await
+            .retain_observed(&current_ids);
 
         if let Some(cutoff) = Utc::now().checked_sub_signed(TimeDelta::days(30)) {
             if let Err(error) = self.0.store.cleanup_stale(&current_ids, cutoff).await {
@@ -261,6 +272,7 @@ impl AppState {
             rejected: info.rejected,
             at: info.at,
         });
+        self.trigger_automatic_tests();
         Ok(info)
     }
 
@@ -293,6 +305,12 @@ impl AppState {
 
     /// Adds an isolated quality test to the bounded queue.
     pub async fn enqueue_test(&self, node_id: NodeId) -> Result<OperationId, ServiceError> {
+        self.enqueue_test_job(node_id)
+            .await
+            .map(|(operation_id, _)| operation_id)
+    }
+
+    async fn enqueue_test_job(&self, node_id: NodeId) -> Result<(OperationId, bool), ServiceError> {
         let node = self
             .node(&node_id)
             .await
@@ -300,41 +318,43 @@ impl AppState {
         if node.availability != NodeAvailability::Available || node.openvpn.is_none() {
             return Err(ServiceError::NodeUnavailable);
         }
-        let operation_id = OperationId::new();
-        let state = TestState::Queued {
-            node_id: node_id.clone(),
-            queued_at: Utc::now(),
-        };
-        self.0
-            .operations
-            .write()
-            .await
-            .insert(operation_id, state.clone());
-        let job = TestJob {
-            operation_id,
-            node_id,
+        let mut registry = self.0.test_registry.write().await;
+        let (operation_id, state) = match registry.queue(node_id.clone(), Utc::now()) {
+            QueueRegistration::Existing(operation_id) => return Ok((operation_id, false)),
+            QueueRegistration::New {
+                operation_id,
+                state,
+            } => (operation_id, state),
         };
         self.0.queued_tests.fetch_add(1, Ordering::Relaxed);
-        if self.0.test_queue.try_send(job).is_err() {
+        if self
+            .0
+            .test_queue
+            .try_send(TestJob {
+                operation_id,
+                node_id: node_id.clone(),
+            })
+            .is_err()
+        {
             self.0.queued_tests.fetch_sub(1, Ordering::Relaxed);
-            self.0.operations.write().await.remove(&operation_id);
+            registry.rollback_queued(&node_id, operation_id);
             return Err(ServiceError::QueueFull);
         }
+        drop(registry);
         self.emit(AppEvent::Test {
             operation_id,
             state,
         });
-        Ok(operation_id)
+        Ok((operation_id, true))
     }
 
     /// Returns a test operation snapshot.
     pub async fn test_state(&self, operation_id: OperationId) -> Result<TestState, ServiceError> {
         self.0
-            .operations
+            .test_registry
             .read()
             .await
-            .get(&operation_id)
-            .cloned()
+            .state(operation_id)
             .ok_or(ServiceError::OperationNotFound)
     }
 
@@ -399,6 +419,62 @@ impl AppState {
 
     fn emit(&self, event: AppEvent) {
         let _receiver_count = self.0.events.send(event);
+    }
+
+    fn trigger_automatic_tests(&self) {
+        let _triggered = self.0.automatic_test_trigger.try_send(());
+    }
+
+    async fn schedule_automatic_tests(&self) -> Result<usize, ServiceError> {
+        let tested = self
+            .0
+            .store
+            .latest_tests()
+            .await?
+            .into_keys()
+            .collect::<HashSet<_>>();
+        let nodes = self.nodes().await;
+        let known = self.0.test_registry.read().await.known_nodes();
+        let available_capacity = self.0.test_queue.capacity();
+        let candidates = select_automatic_tests(
+            nodes.iter().map(AutomaticTestCandidate::from),
+            &tested,
+            &known,
+            available_capacity,
+        );
+        let mut scheduled = 0;
+        for node_id in candidates {
+            match self.enqueue_test_job(node_id).await {
+                Ok((_, true)) => scheduled += 1,
+                Ok((_, false))
+                | Err(ServiceError::NodeNotFound | ServiceError::NodeUnavailable) => {}
+                Err(ServiceError::QueueFull) => break,
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(scheduled)
+    }
+}
+
+async fn automatic_test_scheduler(state: AppState, mut triggers: mpsc::Receiver<()>) {
+    loop {
+        tokio::select! {
+            () = state.0.shutdown.cancelled() => break,
+            trigger = triggers.recv() => {
+                if trigger.is_none() {
+                    break;
+                }
+                match state.schedule_automatic_tests().await {
+                    Ok(scheduled) if scheduled > 0 => {
+                        tracing::info!(scheduled, "scheduled automatic IPPure tests");
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(error = ?error, "failed to schedule automatic IPPure tests");
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -609,16 +685,11 @@ async fn test_dispatcher(state: AppState, mut jobs: mpsc::Receiver<TestJob>) {
 
 async fn run_test(state: &AppState, job: TestJob) {
     let started_at = Utc::now();
-    let running = TestState::Running {
-        node_id: job.node_id.clone(),
+    let running = state.0.test_registry.write().await.mark_running(
+        job.operation_id,
+        job.node_id.clone(),
         started_at,
-    };
-    state
-        .0
-        .operations
-        .write()
-        .await
-        .insert(job.operation_id, running.clone());
+    );
     state.emit(AppEvent::Test {
         operation_id: job.operation_id,
         state: running,
@@ -693,34 +764,17 @@ async fn run_test(state: &AppState, job: TestJob) {
     if let Err(error) = state.0.store.save_test(&record).await {
         tracing::warn!(error = %error, node.id = %job.node_id, "failed to persist test result");
     }
-    let mut operations = state.0.operations.write().await;
-    operations.insert(job.operation_id, test_state.clone());
-    prune_completed_operations(&mut operations);
-    drop(operations);
+    state.0.test_registry.write().await.complete(
+        job.operation_id,
+        job.node_id,
+        test_state.clone(),
+        COMPLETED_OPERATION_HISTORY,
+    );
     state.emit(AppEvent::Test {
         operation_id: job.operation_id,
         state: test_state,
     });
-}
-
-fn prune_completed_operations(operations: &mut HashMap<OperationId, TestState>) {
-    let mut completed = operations
-        .iter()
-        .filter_map(|(operation_id, state)| match state {
-            TestState::Succeeded { record, .. } | TestState::Failed { record, .. } => {
-                Some((*operation_id, record.tested_at))
-            }
-            TestState::Queued { .. } | TestState::Running { .. } => None,
-        })
-        .collect::<Vec<_>>();
-    let excess = completed.len().saturating_sub(COMPLETED_OPERATION_HISTORY);
-    if excess == 0 {
-        return;
-    }
-    completed.sort_unstable_by(|left, right| left.1.cmp(&right.1));
-    for (operation_id, _) in completed.into_iter().take(excess) {
-        operations.remove(&operation_id);
-    }
+    state.trigger_automatic_tests();
 }
 
 #[derive(Debug, Error)]

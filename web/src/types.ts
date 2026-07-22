@@ -58,6 +58,13 @@ export type TestState =
   | { state: "succeeded"; nodeId: string; record: TestRecord }
   | { state: "failed"; nodeId: string; record: TestRecord };
 
+export interface TestOperation {
+  id: string;
+  state: TestState;
+}
+
+export type TestOperations = Record<string, TestOperation>;
+
 export interface StatusSnapshot {
   connection: ConnectionState;
   proxyReady: boolean;
@@ -85,3 +92,16 @@ export interface ApiFailure {
     message: string;
   };
 }
+
+export type AppEvent =
+  | { type: "connection"; data: ConnectionState }
+  | { type: "test"; data: { operationId: string; state: TestState } }
+  | {
+      type: "nodesRefreshed";
+      data: { accepted: number; rejected: number; at: string };
+    }
+  | { type: "refreshFailed"; data: { message: string; at: string } }
+  | {
+      type: "upstream";
+      data: { state: StatusSnapshot["upstreamState"]; at: string };
+    };

@@ -63,7 +63,8 @@ podman run --rm \
 - CSV 响应、行数和 Base64 profile 均有限制。坏行只计入拒绝统计，不会破坏其余快照。
 - v1 仅使用 TCP OpenVPN。UDP-only 节点仍显示为不可用。
 - 切换采用 make-before-break：新 worker 到达 OpenVPN `CONNECTED,SUCCESS` 后才原子替换 relay，旧 worker 排空 30 秒。新连接失败时旧节点保持活动。
-- 测试队列默认最多并行 3 个。每个测试使用临时 worker，经其 SOCKS5 以远端 DNS 请求 IPPure，不会修改活动 relay。
+- 可用节点没有持久化的 IPPure 结果时会自动进入有界测试队列；高评分、低 Ping 节点优先。失败记录视为一次已完成检测，避免故障节点无限重试，可从 WebUI 手动重新检测。
+- 测试队列默认最多并行 3 个。每个测试使用临时 worker，经其 SOCKS5 以远端 DNS 请求 IPPure，不会修改活动 relay；手动与自动请求会按节点去重。
 
 ## API
 

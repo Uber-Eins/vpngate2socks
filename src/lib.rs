@@ -1,6 +1,7 @@
 //! Linux-first, leak-resistant VPN Gate to local SOCKS5 service.
 
 pub mod api;
+mod automatic_tests;
 pub mod config;
 pub mod domain;
 pub mod netd;
@@ -9,6 +10,7 @@ pub mod quality;
 pub mod service;
 pub mod socks;
 pub mod storage;
+mod test_registry;
 pub mod vpngate;
 
 use std::{path::PathBuf, time::Duration};
