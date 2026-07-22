@@ -9,7 +9,7 @@ RUN npm run build
 
 FROM rust:1.90-bookworm AS rust-builder
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends cmake clang pkg-config \
+    && apt-get install -y --no-install-recommends cmake clang libssl-dev pkg-config \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY Cargo.toml Cargo.lock ./
@@ -20,7 +20,7 @@ RUN cargo build --locked --release
 FROM debian:bookworm-slim
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates curl iproute2 nftables openvpn tini util-linux \
+        ca-certificates curl iproute2 libssl3 nftables openvpn tini util-linux \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 vpngate2socks \
     && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin vpngate2socks \

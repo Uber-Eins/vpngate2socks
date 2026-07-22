@@ -379,7 +379,7 @@ impl AppState {
                     }
                     Err(ServiceError::RefreshBusy) => Duration::from_secs(1),
                     Err(error) => {
-                        tracing::warn!(error = %error, "VPN Gate refresh failed");
+                        tracing::warn!(error = ?error, "VPN Gate refresh failed");
                         state.emit(AppEvent::RefreshFailed {
                             message: error.to_string(),
                             at: Utc::now(),

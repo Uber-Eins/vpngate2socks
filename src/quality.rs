@@ -43,6 +43,7 @@ pub async fn fetch_ippure(
             .map_err(IpPureError::Client)?;
         let client = reqwest::Client::builder()
             .https_only(true)
+            .tls_backend_native()
             .proxy(proxy)
             .timeout(timeout)
             .build()

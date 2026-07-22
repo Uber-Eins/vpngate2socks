@@ -98,6 +98,7 @@ pub async fn fetch_snapshot(
     let proxy = reqwest::Proxy::all(proxy_url.as_str()).map_err(VpnGateError::Client)?;
     let client = reqwest::Client::builder()
         .https_only(true)
+        .tls_backend_native()
         .proxy(proxy)
         .timeout(timeout)
         .build()
