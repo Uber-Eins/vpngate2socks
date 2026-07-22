@@ -1,0 +1,59 @@
+[package]
+name = "vpngate2socks"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Leak-resistant local SOCKS5 proxy backed by isolated VPN Gate workers"
+license = "MIT"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+axum = { version = "0.8.9", features = ["macros"] }
+axum-server = { version = "0.8.0", features = ["tls-rustls"] }
+base64 = "0.22.1"
+blake3 = "1.8.5"
+chrono = { version = "0.4.45", features = ["serde"] }
+clap = { version = "4.6.3", features = ["derive", "env"] }
+csv = "1.4.0"
+futures-util = "0.3.33"
+http-body-util = "0.1.4"
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "socks", "stream"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio-rustls", "sqlite", "chrono", "macros", "migrate"] }
+subtle = "2.6.1"
+thiserror = "2.0.19"
+tokio = { version = "1.53.1", features = ["full"] }
+tokio-stream = { version = "0.1.18", features = ["sync"] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
+tower-http = { version = "0.7.0", features = ["trace", "fs", "limit", "request-id"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+url = "2.5.8"
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
+zeroize = "1.9.0"
+
+[dev-dependencies]
+proptest = "1.11.0"
+tempfile = "3.27.0"
+tower = { version = "0.5.3", features = ["util"] }
+
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+missing_errors_doc = "allow"
+similar_names = "allow"
+too_many_lines = "allow"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
