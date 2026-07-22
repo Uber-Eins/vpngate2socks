@@ -8,7 +8,7 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 use crate::{
-    domain::{NodeAvailability, NodeId, UpstreamEndpoint, VpnNode, is_public_ipv4},
+    domain::{NodeAvailability, NodeId, ResolvedUpstreamEndpoint, VpnNode, is_public_ipv4},
     openvpn::{OpenVpnConfigError, sanitize_openvpn},
 };
 
@@ -90,7 +90,7 @@ pub enum VpnGateError {
 /// Downloads the official node list only through the configured `SOCKS5h` proxy.
 pub async fn fetch_snapshot(
     endpoint: &url::Url,
-    upstream: &UpstreamEndpoint,
+    upstream: &ResolvedUpstreamEndpoint,
     timeout: Duration,
     limits: CsvLimits,
 ) -> Result<ParsedSnapshot, VpnGateError> {

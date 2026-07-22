@@ -32,10 +32,10 @@ services:
     volumes:
       - vpngate2socks-data:/var/lib/vpngate2socks
     ports:
-      - 127.0.0.1:8080:8080
-      - 127.0.0.1:1080:1080
+      - 127.0.0.1:28080:8080
+      - 127.0.0.1:21080:1080
     environment:
-      VPNGATE2SOCKS_UPSTREAM: ${VPNGATE2SOCKS_UPSTREAM:?set an IPv4 SOCKS5 endpoint}
+      VPNGATE2SOCKS_UPSTREAM: ${VPNGATE2SOCKS_UPSTREAM:?set an IPv4 or hostname SOCKS5 endpoint}
       VPNGATE2SOCKS_UPSTREAM_USER: ${VPNGATE2SOCKS_UPSTREAM_USER:-}
       VPNGATE2SOCKS_UPSTREAM_PASSWORD: ${VPNGATE2SOCKS_UPSTREAM_PASSWORD:-}
       RUST_LOG: ${RUST_LOG:-vpngate2socks=info,tower_http=info}

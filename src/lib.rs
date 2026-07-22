@@ -90,10 +90,22 @@ async fn run_control_plane(config: AppConfig) -> anyhow::Result<()> {
     if config.lan_mode && config.tls.is_none() {
         tracing::warn!("LAN 模式未配置 TLS；WebUI 与 SOCKS 凭据会以明文在局域网传输");
     }
+    let netd = netd::NetdClient::new(
+        config.netd_socket.clone(),
+        config.connect_timeout + Duration::from_secs(10),
+    );
+    let upstream_address = netd
+        .ping()
+        .await
+        .context("failed to obtain the upstream address pinned by netd")?;
+    let upstream = config
+        .upstream
+        .resolve_to(upstream_address)
+        .context("netd resolved an inconsistent upstream address")?;
     let store = storage::Store::open(&config.database_url)
         .await
         .context("failed to open application database")?;
-    let state = service::AppState::new(config.clone(), store, shutdown.clone());
+    let state = service::AppState::new(config.clone(), upstream, store, shutdown.clone());
     state.start_refresh_loop();
 
     tracing::info!(

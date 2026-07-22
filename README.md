@@ -8,7 +8,7 @@
 
 ## 快速启动（rootless Podman）
 
-主机需要 Podman 6+、可用的 `/dev/net/tun`，以及一个可从容器访问的 IPv4 SOCKS5 上游。
+主机需要 Podman 6+、可用的 `/dev/net/tun`，以及一个可从容器访问的 SOCKS5 上游。上游可以写成 IPv4 地址，也可以写成 `host.containers.internal:端口` 这类 ASCII 主机名；IPv6 上游仍不在 v1 支持范围内。主机上的 mihomo 等代理必须监听容器可访问的端口。
 
 ```bash
 cp .env.example .env
@@ -33,7 +33,7 @@ podman run --rm \
   --read-only --tmpfs /run:size=16m,mode=0755 --tmpfs /tmp:size=16m,mode=1777 \
   --volume vpngate2socks-data:/var/lib/vpngate2socks \
   --secret v2s-upstream-password,type=mount,target=upstream-password \
-  -e VPNGATE2SOCKS_UPSTREAM=192.0.2.10:1080 \
+  -e VPNGATE2SOCKS_UPSTREAM=host.containers.internal:1080 \
   -e VPNGATE2SOCKS_UPSTREAM_USER=user \
   -e VPNGATE2SOCKS_UPSTREAM_PASSWORD_FILE=/run/secrets/upstream-password \
   -p 127.0.0.1:8080:8080 -p 127.0.0.1:1080:1080 \
@@ -47,6 +47,7 @@ podman run --rm \
 - 只有 `netd` 保留容器内的 `NET_ADMIN`/`SYS_ADMIN`。命令通过权限为 `0660`、位于 `0750` 目录中的类型化 Unix socket 传递。
 - 每个 worker 拥有独立 netns、veth、`tun0`、OpenVPN management socket 和 Unix SOCKS socket。
 - netd 使用 `nsenter` 进入子 netns，并在短生命周期 mount namespace 中挂载可写 procfs 来关闭 IPv6；这避开 rootless 容器中 `ip netns exec` 重挂载 `/sys` 的限制。
+- 上游主机名只由 netd 在启动时解析一次，并固定为一个 IPv4 地址；该地址通过类型化 `Pong` 响应交给控制面。nftables、OpenVPN、VPN Gate 请求和上游健康探测因此始终使用同一个地址，不会因重复解析而绕过闭锁。
 - worker 的 nftables 输出策略默认拒绝：veth 只允许访问配置的上游 IPv4/端口，业务流量只允许经 `tun0`。
 - worker 内置有界的 IPv4 DNS 客户端，固定查询 `1.1.1.1` 和 `8.8.8.8`；查询只有在 VPN 路由可用时才能经 `tun0` 发出，不读取或回落到容器 DNS。
 - 根命名空间的 nftables 输出策略也默认拒绝，仅放行回环、已建立连接和指定上游。VPN Gate API 使用 `socks5h`，不会直连回退。

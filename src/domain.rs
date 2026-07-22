@@ -1,7 +1,7 @@
 //! Core domain values and externally visible state.
 
 use std::{
-    fmt,
+    fmt, io,
     net::{Ipv4Addr, SocketAddrV4},
     num::NonZeroU16,
     str::FromStr,
@@ -9,6 +9,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Deserializer, Serialize};
+use thiserror::Error;
 use uuid::Uuid;
 use zeroize::Zeroize;
 
@@ -171,25 +172,45 @@ impl Drop for SecretString {
     }
 }
 
-/// Validated IPv4 SOCKS5 endpoint and optional RFC 1929 credentials.
+/// Configured SOCKS5 endpoint and optional RFC 1929 credentials.
 #[derive(Clone, PartialEq, Eq)]
 pub struct UpstreamEndpoint {
-    host: Ipv4Addr,
+    host: String,
     port: NonZeroU16,
     username: Option<String>,
     password: Option<SecretString>,
 }
 
 impl UpstreamEndpoint {
-    /// Constructs a validated endpoint.
+    /// Constructs a validated endpoint from a numeric IPv4 address.
     pub fn new(
         host: Ipv4Addr,
         port: NonZeroU16,
         username: Option<String>,
         password: Option<SecretString>,
     ) -> Result<Self, &'static str> {
-        if host.octets()[0] == 0 || host == Ipv4Addr::BROADCAST || host.is_multicast() {
-            return Err("upstream host must be a unicast IPv4 address");
+        Self::new_host(host.to_string(), port, username, password)
+    }
+
+    /// Constructs a validated endpoint from an IPv4 address or DNS/container hostname.
+    pub fn new_host(
+        host: impl Into<String>,
+        port: NonZeroU16,
+        username: Option<String>,
+        password: Option<SecretString>,
+    ) -> Result<Self, &'static str> {
+        let host = host.into();
+        if let Ok(address) = host.parse::<Ipv4Addr>() {
+            if !is_valid_upstream_ipv4(address) {
+                return Err("upstream host must be a unicast IPv4 address");
+            }
+        } else if host
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || byte == b'.')
+        {
+            return Err("upstream host contains an invalid IPv4 address");
+        } else if !is_valid_upstream_hostname(&host) {
+            return Err("upstream host must be an IPv4 address or valid ASCII hostname");
         }
         if username.is_some() != password.is_some() {
             return Err("upstream username and password must be configured together");
@@ -207,17 +228,73 @@ impl UpstreamEndpoint {
             );
         }
         Ok(Self {
-            host,
+            host: host.to_ascii_lowercase(),
             port,
             username,
             password,
         })
     }
 
-    /// Returns the network address without credentials.
+    /// Returns the configured hostname without credentials.
+    #[must_use]
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
+    /// Resolves and pins one IPv4 address for firewall and transport consistency.
+    pub async fn resolve_ipv4(&self) -> Result<ResolvedUpstreamEndpoint, UpstreamResolveError> {
+        if let Ok(address) = self.host.parse::<Ipv4Addr>() {
+            return self.resolve_to(SocketAddrV4::new(address, self.port.get()));
+        }
+        let addresses = tokio::net::lookup_host((self.host.as_str(), self.port.get()))
+            .await
+            .map_err(UpstreamResolveError::Lookup)?;
+        let address = addresses
+            .filter_map(|address| match address {
+                std::net::SocketAddr::V4(address) if is_valid_upstream_ipv4(*address.ip()) => {
+                    Some(address)
+                }
+                std::net::SocketAddr::V4(_) | std::net::SocketAddr::V6(_) => None,
+            })
+            .min_by_key(|address| u32::from(*address.ip()))
+            .ok_or(UpstreamResolveError::NoIpv4)?;
+        self.resolve_to(address)
+    }
+
+    /// Combines this configuration with the exact address selected by the helper.
+    pub fn resolve_to(
+        &self,
+        address: SocketAddrV4,
+    ) -> Result<ResolvedUpstreamEndpoint, UpstreamResolveError> {
+        if address.port() != self.port.get() || !is_valid_upstream_ipv4(*address.ip()) {
+            return Err(UpstreamResolveError::Mismatch);
+        }
+        if let Ok(configured) = self.host.parse::<Ipv4Addr>() {
+            if configured != *address.ip() {
+                return Err(UpstreamResolveError::Mismatch);
+            }
+        }
+        Ok(ResolvedUpstreamEndpoint {
+            address,
+            username: self.username.clone(),
+            password: self.password.clone(),
+        })
+    }
+}
+
+/// A configured upstream pinned to the same IPv4 address used by nftables.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ResolvedUpstreamEndpoint {
+    address: SocketAddrV4,
+    username: Option<String>,
+    password: Option<SecretString>,
+}
+
+impl ResolvedUpstreamEndpoint {
+    /// Returns the pinned network address without credentials.
     #[must_use]
     pub const fn socket_addr(&self) -> SocketAddrV4 {
-        SocketAddrV4::new(self.host, self.port.get())
+        self.address
     }
 
     /// Returns the optional username.
@@ -234,13 +311,49 @@ impl UpstreamEndpoint {
 
     /// Builds a remote-DNS SOCKS URL for HTTP clients.
     pub fn proxy_url(&self) -> Result<url::Url, url::ParseError> {
-        let mut url = url::Url::parse(&format!("socks5h://{}:{}", self.host, self.port))?;
+        let mut url = url::Url::parse(&format!("socks5h://{}", self.address))?;
         if let (Some(username), Some(password)) = (self.username(), self.password()) {
             let _ = url.set_username(username);
             let _ = url.set_password(Some(password));
         }
         Ok(url)
     }
+}
+
+/// Failure while resolving or reconciling the configured upstream endpoint.
+#[derive(Debug, Error)]
+pub enum UpstreamResolveError {
+    #[error("failed to resolve the upstream SOCKS5 hostname")]
+    Lookup(#[source] io::Error),
+    #[error("upstream SOCKS5 hostname has no usable IPv4 address")]
+    NoIpv4,
+    #[error("resolved upstream SOCKS5 address does not match its configuration")]
+    Mismatch,
+}
+
+fn is_valid_upstream_ipv4(host: Ipv4Addr) -> bool {
+    host.octets()[0] != 0 && host != Ipv4Addr::BROADCAST && !host.is_multicast()
+}
+
+fn is_valid_upstream_hostname(host: &str) -> bool {
+    !host.is_empty()
+        && host.len() <= 253
+        && host.is_ascii()
+        && host.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+                && label
+                    .as_bytes()
+                    .first()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+                && label
+                    .as_bytes()
+                    .last()
+                    .is_some_and(u8::is_ascii_alphanumeric)
+        })
 }
 
 fn invalid_socks_credential(value: &str) -> bool {
@@ -257,6 +370,16 @@ impl fmt::Debug for UpstreamEndpoint {
             .debug_struct("UpstreamEndpoint")
             .field("host", &self.host)
             .field("port", &self.port)
+            .field("has_credentials", &self.username.is_some())
+            .finish_non_exhaustive()
+    }
+}
+
+impl fmt::Debug for ResolvedUpstreamEndpoint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ResolvedUpstreamEndpoint")
+            .field("address", &self.address)
             .field("has_credentials", &self.username.is_some())
             .finish_non_exhaustive()
     }
@@ -552,6 +675,68 @@ mod tests {
                 Some(SecretString::new("secret")),
             )
             .is_err()
+        );
+    }
+
+    #[test]
+    fn upstream_container_hostname_is_validated_and_pinned() {
+        let endpoint = UpstreamEndpoint::new_host(
+            "HOST.containers.internal",
+            NonZeroU16::new(1080).expect("non-zero port"),
+            Some("user".to_owned()),
+            Some(SecretString::new("secret")),
+        )
+        .expect("container hostname is valid");
+        assert_eq!(endpoint.host(), "host.containers.internal");
+
+        let resolved = endpoint
+            .resolve_to("10.0.2.2:1080".parse().expect("test address"))
+            .expect("hostname can be pinned to IPv4");
+        assert_eq!(
+            resolved.socket_addr(),
+            "10.0.2.2:1080".parse().expect("test address")
+        );
+        let proxy_url = resolved.proxy_url().expect("proxy URL is valid");
+        assert_eq!(proxy_url.host_str(), Some("10.0.2.2"));
+        assert!(!format!("{resolved:?}").contains("secret"));
+    }
+
+    #[test]
+    fn upstream_hostname_rejects_ambiguous_or_unsafe_values() {
+        let port = NonZeroU16::new(1080).expect("non-zero port");
+        for host in [
+            "host..internal",
+            "-host.internal",
+            "host_.internal",
+            "[::1]",
+            "127.1",
+            "999.0.0.1",
+        ] {
+            assert!(
+                UpstreamEndpoint::new_host(host, port, None, None).is_err(),
+                "{host} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn numeric_upstream_must_match_the_pinned_address() {
+        let endpoint = UpstreamEndpoint::new(
+            Ipv4Addr::new(10, 0, 2, 2),
+            NonZeroU16::new(1080).expect("non-zero port"),
+            None,
+            None,
+        )
+        .expect("valid endpoint");
+        assert!(
+            endpoint
+                .resolve_to("10.0.2.3:1080".parse().expect("test address"))
+                .is_err()
+        );
+        assert!(
+            endpoint
+                .resolve_to("10.0.2.2:1081".parse().expect("test address"))
+                .is_err()
         );
     }
 

@@ -19,8 +19,8 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     config::AppConfig,
     domain::{
-        AppEvent, ConnectionState, NodeAvailability, NodeId, OperationId, TestRecord, TestState,
-        UpstreamState, VpnNode, WorkerId,
+        AppEvent, ConnectionState, NodeAvailability, NodeId, OperationId, ResolvedUpstreamEndpoint,
+        TestRecord, TestState, UpstreamState, VpnNode, WorkerId,
     },
     netd::{NetdClient, NetdClientError},
     quality::fetch_ippure,
@@ -39,6 +39,7 @@ pub struct AppState(Arc<Inner>);
 
 struct Inner {
     config: Arc<AppConfig>,
+    upstream: ResolvedUpstreamEndpoint,
     store: Store,
     netd: NetdClient,
     nodes: RwLock<Arc<Vec<VpnNode>>>,
@@ -137,7 +138,12 @@ pub enum ServiceError {
 impl AppState {
     /// Creates state and starts bounded connection and test actors.
     #[must_use]
-    pub fn new(config: AppConfig, store: Store, shutdown: CancellationToken) -> Self {
+    pub fn new(
+        config: AppConfig,
+        upstream: ResolvedUpstreamEndpoint,
+        store: Store,
+        shutdown: CancellationToken,
+    ) -> Self {
         let config = Arc::new(config);
         let netd = NetdClient::new(
             config.netd_socket.clone(),
@@ -151,6 +157,7 @@ impl AppState {
         let (events, _) = broadcast::channel(256);
         let state = Self(Arc::new(Inner {
             config,
+            upstream,
             store,
             netd,
             nodes: RwLock::new(Arc::new(Vec::new())),
@@ -229,7 +236,7 @@ impl AppState {
     async fn refresh_nodes_inner(&self) -> Result<RefreshInfo, ServiceError> {
         let snapshot = fetch_snapshot(
             &self.0.config.vpngate_url,
-            &self.0.config.upstream,
+            &self.0.upstream,
             Duration::from_secs(30),
             CsvLimits::default(),
         )
@@ -397,7 +404,7 @@ impl AppState {
 
 async fn upstream_monitor(state: AppState) {
     loop {
-        let next = match probe_upstream(&state.0.config.upstream, Duration::from_secs(3)).await {
+        let next = match probe_upstream(&state.0.upstream, Duration::from_secs(3)).await {
             Ok(()) => UpstreamState::Ready,
             Err(UpstreamProbeError::Authentication) => UpstreamState::AuthenticationFailed,
             Err(

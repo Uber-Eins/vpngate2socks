@@ -23,7 +23,7 @@ terminate() {
 }
 trap terminate TERM INT EXIT
 
-for _attempt in $(seq 1 100); do
+for _attempt in $(seq 1 400); do
     if [[ -S "${V2S_RUNTIME}/netd.sock" ]]; then
         break
     fi

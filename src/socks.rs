@@ -25,7 +25,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     config::Credentials,
-    domain::{UpstreamEndpoint, is_public_ipv4},
+    domain::{ResolvedUpstreamEndpoint, is_public_ipv4},
 };
 
 const SOCKS_VERSION: u8 = 5;
@@ -99,7 +99,7 @@ enum Target {
 
 /// Checks the configured upstream without creating a destination connection.
 pub async fn probe_upstream(
-    endpoint: &UpstreamEndpoint,
+    endpoint: &ResolvedUpstreamEndpoint,
     timeout: Duration,
 ) -> Result<(), UpstreamProbeError> {
     tokio::time::timeout(timeout, probe_upstream_inner(endpoint))
@@ -107,7 +107,9 @@ pub async fn probe_upstream(
         .map_err(|_| UpstreamProbeError::Timeout)?
 }
 
-async fn probe_upstream_inner(endpoint: &UpstreamEndpoint) -> Result<(), UpstreamProbeError> {
+async fn probe_upstream_inner(
+    endpoint: &ResolvedUpstreamEndpoint,
+) -> Result<(), UpstreamProbeError> {
     let mut stream = TcpStream::connect(endpoint.socket_addr())
         .await
         .map_err(UpstreamProbeError::Unreachable)?;
@@ -830,7 +832,9 @@ pub async fn one_shot_bridge(
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU16;
+    use std::{net::SocketAddrV4, num::NonZeroU16};
+
+    use crate::domain::UpstreamEndpoint;
 
     use super::*;
 
@@ -911,6 +915,9 @@ mod tests {
             Some(crate::domain::SecretString::new("secret")),
         )
         .expect("valid upstream");
+        let endpoint = endpoint
+            .resolve_to(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port.get()))
+            .expect("upstream resolves");
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("mock connection");
             let mut greeting = [0_u8; 4];
@@ -944,6 +951,9 @@ mod tests {
             .expect("listener port is non-zero");
         let endpoint =
             UpstreamEndpoint::new(Ipv4Addr::LOCALHOST, port, None, None).expect("valid upstream");
+        let endpoint = endpoint
+            .resolve_to(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port.get()))
+            .expect("upstream resolves");
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("mock connection");
             let mut greeting = [0_u8; 3];

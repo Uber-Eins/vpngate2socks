@@ -423,11 +423,15 @@ mod tests {
     async fn test_router() -> (Router, CancellationToken, tempfile::TempDir) {
         let directory = tempdir().expect("temporary directory");
         let config = AppConfig::test_config(directory.path().to_path_buf());
+        let upstream = config
+            .upstream
+            .resolve_to("127.0.0.1:9".parse().expect("test upstream address"))
+            .expect("test upstream resolves");
         let store = Store::open("sqlite::memory:")
             .await
             .expect("in-memory store");
         let shutdown = CancellationToken::new();
-        let state = AppState::new(config, store, shutdown.clone());
+        let state = AppState::new(config, upstream, store, shutdown.clone());
         (router(state), shutdown, directory)
     }
 
@@ -493,11 +497,15 @@ mod tests {
             username: "operator".to_owned(),
             password: SecretString::new("secret"),
         });
+        let upstream = config
+            .upstream
+            .resolve_to("127.0.0.1:9".parse().expect("test upstream address"))
+            .expect("test upstream resolves");
         let store = Store::open("sqlite::memory:")
             .await
             .expect("in-memory store");
         let shutdown = CancellationToken::new();
-        let router = router(AppState::new(config, store, shutdown.clone()));
+        let router = router(AppState::new(config, upstream, store, shutdown.clone()));
 
         let unauthorized = router
             .clone()

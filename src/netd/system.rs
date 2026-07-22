@@ -28,7 +28,7 @@ use zeroize::Zeroizing;
 
 use crate::{
     config::AppConfig,
-    domain::{NodeId, UpstreamEndpoint, WorkerId, is_public_ipv4},
+    domain::{NodeId, ResolvedUpstreamEndpoint, UpstreamResolveError, WorkerId, is_public_ipv4},
     openvpn::sanitize_openvpn,
 };
 
@@ -51,6 +51,10 @@ pub enum NetdServerError {
     Accept(#[source] io::Error),
     #[error("failed to install the root namespace leak guard: {0}")]
     Guard(String),
+    #[error("failed to resolve the upstream SOCKS5 endpoint")]
+    Resolve(#[source] UpstreamResolveError),
+    #[error("timed out while resolving the upstream SOCKS5 endpoint")]
+    ResolveTimeout,
 }
 
 #[derive(Debug, Error)]
@@ -118,7 +122,7 @@ struct WorkerProcess {
 
 struct WorkerManager {
     runtime_dir: PathBuf,
-    upstream: UpstreamEndpoint,
+    upstream: ResolvedUpstreamEndpoint,
     workers: RwLock<HashMap<WorkerId, WorkerProcess>>,
     starting: StdMutex<HashSet<WorkerId>>,
     free_networks: Arc<StdMutex<Vec<u16>>>,
@@ -146,10 +150,14 @@ impl Drop for WorkerReservation<'_> {
 }
 
 impl WorkerManager {
-    fn new(config: &AppConfig, shutdown: CancellationToken) -> Self {
+    fn new(
+        config: &AppConfig,
+        upstream: ResolvedUpstreamEndpoint,
+        shutdown: CancellationToken,
+    ) -> Self {
         Self {
             runtime_dir: config.runtime_dir.join("workers"),
-            upstream: config.upstream.clone(),
+            upstream,
             workers: RwLock::new(HashMap::new()),
             starting: StdMutex::new(HashSet::new()),
             free_networks: Arc::new(StdMutex::new(Vec::new())),
@@ -548,6 +556,10 @@ pub async fn run_netd(
     if !cfg!(target_os = "linux") {
         return Err(NetdServerError::UnsupportedPlatform);
     }
+    let upstream = tokio::time::timeout(Duration::from_secs(5), config.upstream.resolve_ipv4())
+        .await
+        .map_err(|_| NetdServerError::ResolveTimeout)?
+        .map_err(NetdServerError::Resolve)?;
     tokio::fs::create_dir_all(&config.runtime_dir)
         .await
         .map_err(NetdServerError::Runtime)?;
@@ -565,13 +577,9 @@ pub async fn run_netd(
     tokio::fs::set_permissions(&workers_directory, std::fs::Permissions::from_mode(0o710))
         .await
         .map_err(NetdServerError::Runtime)?;
-    prepare_root_network(
-        &config.upstream,
-        config.web_bind.port(),
-        config.socks_bind.port(),
-    )
-    .await
-    .map_err(|error| NetdServerError::Guard(error.to_string()))?;
+    prepare_root_network(&upstream, config.web_bind.port(), config.socks_bind.port())
+        .await
+        .map_err(|error| NetdServerError::Guard(error.to_string()))?;
     match tokio::fs::remove_file(&config.netd_socket).await {
         Ok(()) => {}
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
@@ -583,7 +591,7 @@ pub async fn run_netd(
     tokio::fs::set_permissions(&config.netd_socket, std::fs::Permissions::from_mode(0o660))
         .await
         .map_err(NetdServerError::Runtime)?;
-    let manager = Arc::new(WorkerManager::new(&config, shutdown.clone()));
+    let manager = Arc::new(WorkerManager::new(&config, upstream, shutdown.clone()));
     let clients = Arc::new(Semaphore::new(32));
     let mut client_tasks = JoinSet::new();
 
@@ -644,7 +652,9 @@ async fn serve_client(mut stream: UnixStream, manager: &WorkerManager) -> io::Re
     .await
     .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "netd request timed out"))??;
     let response = match request {
-        NetdRequest::Ping => NetdResponse::Pong,
+        NetdRequest::Ping => NetdResponse::Pong {
+            upstream: manager.upstream.socket_addr(),
+        },
         NetdRequest::StartWorker {
             worker_id,
             node_id,
@@ -681,7 +691,7 @@ async fn serve_client(mut stream: UnixStream, manager: &WorkerManager) -> io::Re
 }
 
 async fn prepare_root_network(
-    upstream: &UpstreamEndpoint,
+    upstream: &ResolvedUpstreamEndpoint,
     web_port: u16,
     socks_port: u16,
 ) -> Result<(), WorkerError> {
@@ -703,7 +713,11 @@ async fn ensure_ipv4_forwarding() -> Result<(), WorkerError> {
     run_command("sysctl", &["-q", "-w", "net.ipv4.ip_forward=1"]).await
 }
 
-fn root_guard_script(upstream: &UpstreamEndpoint, web_port: u16, socks_port: u16) -> String {
+fn root_guard_script(
+    upstream: &ResolvedUpstreamEndpoint,
+    web_port: u16,
+    socks_port: u16,
+) -> String {
     let address = upstream.socket_addr();
     format!(
         r#"
@@ -739,7 +753,7 @@ table inet vpngate2socks_root {{
 
 async fn prepare_worker_network(
     allocation: &NetworkAllocation,
-    upstream: &UpstreamEndpoint,
+    upstream: &ResolvedUpstreamEndpoint,
 ) -> Result<(), WorkerError> {
     run_command("ip", &["netns", "add", &allocation.namespace]).await?;
     run_command(
@@ -864,7 +878,7 @@ pub async fn configure_namespace() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn worker_guard_script(worker_veth: &str, upstream: &UpstreamEndpoint) -> String {
+fn worker_guard_script(worker_veth: &str, upstream: &ResolvedUpstreamEndpoint) -> String {
     let address = upstream.socket_addr();
     format!(
         r#"
@@ -890,7 +904,7 @@ table inet vpngate2socks_guard {{
 
 fn build_runtime_profile(
     sanitized: &str,
-    upstream: &UpstreamEndpoint,
+    upstream: &ResolvedUpstreamEndpoint,
     auth_path: Option<&Path>,
     management_path: &Path,
 ) -> String {
@@ -1313,7 +1327,7 @@ async fn cleanup_directory(directory: &Path) {
 mod tests {
     use std::num::NonZeroU16;
 
-    use crate::domain::SecretString;
+    use crate::domain::{SecretString, UpstreamEndpoint};
     use tempfile::tempdir;
 
     use super::*;
@@ -1327,6 +1341,9 @@ mod tests {
             Some(SecretString::new("password")),
         )
         .expect("valid endpoint");
+        let upstream = upstream
+            .resolve_to("203.0.113.10:1080".parse().expect("test address"))
+            .expect("endpoint resolves");
         let script = worker_guard_script("v2wdeadbeef", &upstream);
         assert!(script.contains("policy drop"));
         assert!(script.contains("203.0.113.10 tcp dport 1080 accept"));
@@ -1345,6 +1362,9 @@ mod tests {
             None,
         )
         .expect("valid endpoint");
+        let upstream = upstream
+            .resolve_to("203.0.113.10:1080".parse().expect("test address"))
+            .expect("endpoint resolves");
         let script = root_guard_script(&upstream, 8080, 1080);
         assert!(script.contains("iifname \"v2h*\" ip daddr 203.0.113.10 tcp dport 1080 accept"));
         assert!(script.contains("iifname \"v2h*\" drop"));
@@ -1355,7 +1375,11 @@ mod tests {
     fn network_indices_are_reused_only_after_the_lease_drops() {
         let directory = tempdir().expect("temporary directory");
         let config = AppConfig::test_config(directory.path().to_path_buf());
-        let manager = WorkerManager::new(&config, CancellationToken::new());
+        let upstream = config
+            .upstream
+            .resolve_to("127.0.0.1:9".parse().expect("test address"))
+            .expect("endpoint resolves");
+        let manager = WorkerManager::new(&config, upstream, CancellationToken::new());
         let first = manager.allocate_network().expect("first allocation");
         let first_namespace = first.namespace.clone();
         let second = manager.allocate_network().expect("second allocation");

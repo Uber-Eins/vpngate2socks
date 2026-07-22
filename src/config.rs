@@ -2,7 +2,7 @@
 
 use std::{
     env,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     num::NonZeroU16,
     path::{Component, Path, PathBuf},
     time::Duration,
@@ -102,36 +102,19 @@ impl AppConfig {
             });
         }
 
-        let upstream_address = required("VPNGATE2SOCKS_UPSTREAM")?;
-        let upstream_address =
-            upstream_address
-                .parse::<SocketAddr>()
-                .map_err(|error| ConfigError::Invalid {
-                    name: "VPNGATE2SOCKS_UPSTREAM",
-                    message: error.to_string(),
-                })?;
-        let IpAddr::V4(upstream_host) = upstream_address.ip() else {
-            return Err(ConfigError::Invalid {
-                name: "VPNGATE2SOCKS_UPSTREAM",
-                message: "only IPv4 upstream endpoints are supported".to_owned(),
-            });
-        };
-        let upstream_port =
-            NonZeroU16::new(upstream_address.port()).ok_or_else(|| ConfigError::Invalid {
-                name: "VPNGATE2SOCKS_UPSTREAM",
-                message: "port must be non-zero".to_owned(),
-            })?;
+        let upstream_authority = required("VPNGATE2SOCKS_UPSTREAM")?;
+        let (upstream_host, upstream_port) = parse_upstream_authority(&upstream_authority)?;
         let upstream_user = config_value("VPNGATE2SOCKS_UPSTREAM_USER")?;
         let upstream_password =
             config_value("VPNGATE2SOCKS_UPSTREAM_PASSWORD")?.map(SecretString::new);
-        let upstream = UpstreamEndpoint::new(
+        let upstream = UpstreamEndpoint::new_host(
             upstream_host,
             upstream_port,
             upstream_user,
             upstream_password,
         )
         .map_err(|message| ConfigError::Invalid {
-            name: "upstream credentials",
+            name: "VPNGATE2SOCKS_UPSTREAM",
             message: message.to_owned(),
         })?;
 
@@ -250,6 +233,28 @@ impl AppConfig {
             openvpn_uid,
         })
     }
+}
+
+fn parse_upstream_authority(value: &str) -> Result<(String, NonZeroU16), ConfigError> {
+    let (host, port) = value.rsplit_once(':').ok_or_else(|| ConfigError::Invalid {
+        name: "VPNGATE2SOCKS_UPSTREAM",
+        message: "expected HOST:PORT".to_owned(),
+    })?;
+    if host.is_empty() || host.contains(':') || host.starts_with('[') || host.ends_with(']') {
+        return Err(ConfigError::Invalid {
+            name: "VPNGATE2SOCKS_UPSTREAM",
+            message: "host must be an IPv4 address or hostname; IPv6 is not supported".to_owned(),
+        });
+    }
+    let port = port.parse::<u16>().map_err(|error| ConfigError::Invalid {
+        name: "VPNGATE2SOCKS_UPSTREAM",
+        message: format!("invalid port: {error}"),
+    })?;
+    let port = NonZeroU16::new(port).ok_or_else(|| ConfigError::Invalid {
+        name: "VPNGATE2SOCKS_UPSTREAM",
+        message: "port must be non-zero".to_owned(),
+    })?;
+    Ok((host.to_owned(), port))
 }
 
 fn required(name: &'static str) -> Result<String, ConfigError> {
@@ -477,5 +482,21 @@ mod tests {
         assert!(!valid_listener_credential(""));
         assert!(!valid_listener_credential(&"x".repeat(256)));
         assert!(!valid_listener_credential("line\nbreak"));
+    }
+
+    #[test]
+    fn upstream_authority_accepts_a_container_hostname() {
+        let (host, port) = parse_upstream_authority("host.containers.internal:1080")
+            .expect("container hostname is accepted");
+        assert_eq!(host, "host.containers.internal");
+        assert_eq!(port.get(), 1080);
+    }
+
+    #[test]
+    fn upstream_authority_rejects_ipv6_and_invalid_ports() {
+        assert!(parse_upstream_authority("[::1]:1080").is_err());
+        assert!(parse_upstream_authority("::1:1080").is_err());
+        assert!(parse_upstream_authority("localhost:0").is_err());
+        assert!(parse_upstream_authority("localhost:not-a-port").is_err());
     }
 }

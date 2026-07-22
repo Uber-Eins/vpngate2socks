@@ -49,7 +49,7 @@ pub enum NetdRequest {
     deny_unknown_fields
 )]
 pub enum NetdResponse {
-    Pong,
+    Pong { upstream: SocketAddrV4 },
     WorkerStarted { socks_socket: PathBuf },
     Stopped,
     WorkerStatus { ready: bool },
@@ -89,12 +89,12 @@ impl NetdClient {
     }
 
     /// Checks whether the helper accepts a request.
-    pub async fn ping(&self) -> Result<(), NetdClientError> {
+    pub async fn ping(&self) -> Result<SocketAddrV4, NetdClientError> {
         match self
             .request(NetdRequest::Ping, CONTROL_REQUEST_TIMEOUT)
             .await?
         {
-            NetdResponse::Pong => Ok(()),
+            NetdResponse::Pong { upstream } => Ok(upstream),
             _ => Err(NetdClientError::UnexpectedResponse),
         }
     }
@@ -249,12 +249,20 @@ mod tests {
                     .expect("request frame"),
                 NetdRequest::Ping
             ));
-            write_frame(&mut stream, &NetdResponse::Pong)
-                .await
-                .expect("response frame");
+            write_frame(
+                &mut stream,
+                &NetdResponse::Pong {
+                    upstream: "127.0.0.1:1080".parse().expect("test address"),
+                },
+            )
+            .await
+            .expect("response frame");
         });
         let client = NetdClient::new(path, Duration::from_secs(1));
-        client.ping().await.expect("typed ping succeeds");
+        assert_eq!(
+            client.ping().await.expect("typed ping succeeds"),
+            "127.0.0.1:1080".parse().expect("test address")
+        );
         helper.await.expect("mock helper exits");
     }
 }
