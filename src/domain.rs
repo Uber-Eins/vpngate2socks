@@ -506,6 +506,108 @@ pub struct TestRecord {
     pub error: Option<String>,
 }
 
+/// `IPPure` network classification used by automatic connection selection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum IpTypeFilter {
+    /// Do not filter on the `IPPure` broadcast classification.
+    #[default]
+    Any,
+    /// Require a directly assigned (non-broadcast) exit IP.
+    Native,
+    /// Require an exit IP classified as broadcast.
+    Broadcast,
+}
+
+impl IpTypeFilter {
+    /// Returns the stable persistence representation.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Native => "native",
+            Self::Broadcast => "broadcast",
+        }
+    }
+
+    /// Parses the stable persistence representation.
+    #[must_use]
+    pub fn from_stored(value: &str) -> Option<Self> {
+        match value {
+            "any" => Some(Self::Any),
+            "native" => Some(Self::Native),
+            "broadcast" => Some(Self::Broadcast),
+            _ => None,
+        }
+    }
+}
+
+/// `IPPure` residential classification used by automatic connection selection.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ResidentialFilter {
+    /// Do not filter on the residential classification.
+    #[default]
+    Any,
+    /// Require a residential exit IP.
+    Residential,
+    /// Require a non-residential exit IP.
+    NonResidential,
+}
+
+impl ResidentialFilter {
+    /// Returns the stable persistence representation.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Any => "any",
+            Self::Residential => "residential",
+            Self::NonResidential => "nonResidential",
+        }
+    }
+
+    /// Parses the stable persistence representation.
+    #[must_use]
+    pub fn from_stored(value: &str) -> Option<Self> {
+        match value {
+            "any" => Some(Self::Any),
+            "residential" => Some(Self::Residential),
+            "nonResidential" => Some(Self::NonResidential),
+            _ => None,
+        }
+    }
+}
+
+/// Persisted policy for automatically selecting and reconnecting a VPN node.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct AutoConnectConfig {
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    pub ip_type: IpTypeFilter,
+    pub residential: ResidentialFilter,
+}
+
+impl AutoConnectConfig {
+    /// Normalizes a user-provided region and rejects values VPN Gate cannot emit.
+    pub fn normalized(mut self) -> Result<Self, &'static str> {
+        self.region = self
+            .region
+            .take()
+            .map(|region| region.trim().to_uppercase())
+            .filter(|region| !region.is_empty());
+        if self
+            .region
+            .as_ref()
+            .is_some_and(|region| region.len() > 8 || region.chars().any(char::is_control))
+        {
+            return Err("region must be at most 8 bytes and contain no control characters");
+        }
+        Ok(self)
+    }
+}
+
 /// State of the active make-before-break connection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(
@@ -587,6 +689,7 @@ pub enum UpstreamState {
 )]
 pub enum AppEvent {
     Connection(ConnectionState),
+    AutoConnection(AutoConnectConfig),
     Test {
         operation_id: OperationId,
         state: TestState,

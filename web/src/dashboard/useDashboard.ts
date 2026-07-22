@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "../api";
 import { parseAppEvent } from "../events/parseAppEvent";
 import type {
+  AutoConnectConfig,
+  AutoConnectSettings,
   NodesPage,
   StatusSnapshot,
   TestOperations,
@@ -15,6 +17,7 @@ const EMPTY_PAGE: NodesPage = { items: [], page: 1, pageSize: PAGE_SIZE, total: 
 
 export interface DashboardModel {
   status: StatusSnapshot | undefined;
+  autoConnect: AutoConnectSettings | undefined;
   page: NodesPage;
   draftSearch: string;
   sort: string;
@@ -31,11 +34,13 @@ export interface DashboardModel {
   disconnect: () => void;
   connect: (nodeId: string) => void;
   test: (nodeId: string) => void;
+  saveAutoConnect: (config: AutoConnectConfig) => void;
   logout: () => void;
 }
 
 export function useDashboard(onLoggedOut: () => void): DashboardModel {
   const [status, setStatus] = useState<StatusSnapshot>();
+  const [autoConnect, setAutoConnect] = useState<AutoConnectSettings>();
   const [page, setPage] = useState(EMPTY_PAGE);
   const [pageNumber, setPageNumberState] = useState(1);
   const [draftSearch, setDraftSearch] = useState("");
@@ -48,12 +53,14 @@ export function useDashboard(onLoggedOut: () => void): DashboardModel {
   const [error, setError] = useState<string>();
 
   const load = useCallback(async () => {
-    const [nextStatus, nextPage] = await Promise.all([
+    const [nextStatus, nextPage, nextAutoConnect] = await Promise.all([
       api.status(),
-      api.nodes({ page: pageNumber, pageSize: PAGE_SIZE, search, sort, order })
+      api.nodes({ page: pageNumber, pageSize: PAGE_SIZE, search, sort, order }),
+      api.autoConnection()
     ]);
     setStatus(nextStatus);
     setPage(nextPage);
+    setAutoConnect(nextAutoConnect);
     setOperations((current) => {
       const next = { ...current };
       let changed = false;
@@ -151,6 +158,7 @@ export function useDashboard(onLoggedOut: () => void): DashboardModel {
 
   return {
     status,
+    autoConnect,
     page,
     draftSearch,
     sort,
@@ -186,6 +194,12 @@ export function useDashboard(onLoggedOut: () => void): DashboardModel {
             state: { state: "queued", nodeId, queuedAt: new Date().toISOString() }
           }
         }));
+      });
+    },
+    saveAutoConnect: (config) => {
+      void runAction("autoConnect", async () => {
+        const settings = await api.updateAutoConnection(config);
+        setAutoConnect(settings);
       });
     },
     logout: () => {

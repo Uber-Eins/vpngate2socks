@@ -4,6 +4,7 @@ import { NodeToolbar } from "../nodes/NodeToolbar";
 import { Pagination } from "../nodes/Pagination";
 import type { SessionState } from "../types";
 import { Notice } from "../ui/Notice";
+import { AutoConnectPanel } from "./AutoConnectPanel";
 import { DashboardHeader } from "./DashboardHeader";
 import { useDashboard } from "./useDashboard";
 
@@ -27,6 +28,12 @@ export function Dashboard({ session, onLoggedOut }: {
         <Notice tone="neutral">{t.browserWarning}</Notice>
         {model.error !== undefined && <Notice tone="danger">{model.error}</Notice>}
       </div>
+
+      <AutoConnectPanel
+        settings={model.autoConnect}
+        busy={model.busy}
+        onSave={model.saveAutoConnect}
+      />
 
       <section className="node-directory" aria-labelledby="node-directory-title">
         <div className="section-heading">

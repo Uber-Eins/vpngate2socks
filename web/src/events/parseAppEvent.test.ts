@@ -27,4 +27,18 @@ describe("parseAppEvent", () => {
     expect(parseAppEvent('{"type":"unknown","data":{}}')).toBeUndefined();
     expect(parseAppEvent('{"type":"test"}')).toBeUndefined();
   });
+
+  it("accepts automatic connection configuration events", () => {
+    const event = parseAppEvent(JSON.stringify({
+      type: "autoConnection",
+      data: {
+        enabled: true,
+        region: "JP",
+        ipType: "native",
+        residential: "residential"
+      }
+    }));
+
+    expect(event?.type).toBe("autoConnection");
+  });
 });

@@ -1,7 +1,8 @@
 //! Application orchestration: refreshes, make-before-break switching, and test isolation.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
+    future::pending,
     path::PathBuf,
     sync::{
         Arc,
@@ -13,15 +14,16 @@ use std::{
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::Serialize;
 use thiserror::Error;
-use tokio::sync::{RwLock, Semaphore, broadcast, mpsc, oneshot, watch};
+use tokio::sync::{Mutex, RwLock, Semaphore, broadcast, mpsc, oneshot, watch};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    auto_connect::select_node as select_auto_connect_node,
     automatic_tests::{AutomaticTestCandidate, select_automatic_tests},
     config::AppConfig,
     domain::{
-        AppEvent, ConnectionState, NodeAvailability, NodeId, OperationId, ResolvedUpstreamEndpoint,
-        TestRecord, TestState, UpstreamState, VpnNode, WorkerId,
+        AppEvent, AutoConnectConfig, ConnectionState, NodeAvailability, NodeId, OperationId,
+        ResolvedUpstreamEndpoint, TestRecord, TestState, UpstreamState, VpnNode, WorkerId,
     },
     netd::{NetdClient, NetdClientError},
     quality::fetch_ippure,
@@ -34,6 +36,9 @@ use crate::{
 const TEST_QUEUE_CAPACITY: usize = 256;
 const COMPLETED_OPERATION_HISTORY: usize = 1_024;
 const OLD_WORKER_DRAIN: Duration = Duration::from_secs(30);
+const AUTO_RECONNECT_INITIAL: Duration = Duration::from_secs(1);
+const AUTO_RECONNECT_MAX: Duration = Duration::from_secs(30);
+const AUTO_NODE_COOLDOWN: Duration = Duration::from_secs(60);
 
 /// Cloneable application state shared by Axum handlers and background tasks.
 #[derive(Clone)]
@@ -50,6 +55,9 @@ struct Inner {
     connection_state: watch::Sender<ConnectionState>,
     active_worker: watch::Sender<Option<PathBuf>>,
     connection_commands: mpsc::Sender<ConnectionCommand>,
+    auto_connect: watch::Sender<AutoConnectConfig>,
+    auto_connect_update: Mutex<()>,
+    auto_connect_trigger: mpsc::Sender<()>,
     test_registry: RwLock<TestRegistry>,
     test_queue: mpsc::Sender<TestJob>,
     automatic_test_trigger: mpsc::Sender<()>,
@@ -115,6 +123,14 @@ pub struct StatusSnapshot {
     pub tls_configured: bool,
 }
 
+/// Region offered by the automatic connection configuration UI.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegionOption {
+    pub code: String,
+    pub name: String,
+}
+
 /// Expected service failure mapped to a stable API error code.
 #[derive(Debug, Error)]
 pub enum ServiceError {
@@ -130,6 +146,8 @@ pub enum ServiceError {
     OperationNotFound,
     #[error("background service is shutting down")]
     ShuttingDown,
+    #[error("invalid automatic connection configuration: {0}")]
+    InvalidAutoConnectConfig(&'static str),
     #[error("VPN Gate refresh failed")]
     Refresh(#[from] VpnGateError),
     #[error("worker operation failed")]
@@ -145,6 +163,7 @@ impl AppState {
         config: AppConfig,
         upstream: ResolvedUpstreamEndpoint,
         store: Store,
+        auto_connect_config: AutoConnectConfig,
         shutdown: CancellationToken,
     ) -> Self {
         let config = Arc::new(config);
@@ -156,6 +175,8 @@ impl AppState {
         let (active_worker, _) = watch::channel(None);
         let (upstream_state, _) = watch::channel(UpstreamState::Checking);
         let (connection_commands, connection_rx) = mpsc::channel(8);
+        let (auto_connect, _) = watch::channel(auto_connect_config);
+        let (auto_connect_trigger, auto_connect_rx) = mpsc::channel(1);
         let (test_queue, test_rx) = mpsc::channel(TEST_QUEUE_CAPACITY);
         let (automatic_test_trigger, automatic_test_rx) = mpsc::channel(1);
         let (events, _) = broadcast::channel(256);
@@ -170,6 +191,9 @@ impl AppState {
             connection_state,
             active_worker,
             connection_commands,
+            auto_connect,
+            auto_connect_update: Mutex::new(()),
+            auto_connect_trigger,
             test_registry: RwLock::new(TestRegistry::default()),
             test_queue,
             automatic_test_trigger,
@@ -179,7 +203,11 @@ impl AppState {
             events,
             shutdown,
         }));
-        tokio::spawn(connection_actor(state.clone(), connection_rx));
+        tokio::spawn(connection_actor(
+            state.clone(),
+            connection_rx,
+            auto_connect_rx,
+        ));
         tokio::spawn(test_dispatcher(state.clone(), test_rx));
         tokio::spawn(automatic_test_scheduler(state.clone(), automatic_test_rx));
         tokio::spawn(upstream_monitor(state.clone()));
@@ -223,6 +251,52 @@ impl AppState {
             .iter()
             .find(|node| &node.id == node_id)
             .cloned()
+    }
+
+    /// Returns the currently active automatic connection policy.
+    #[must_use]
+    pub fn auto_connect_config(&self) -> AutoConnectConfig {
+        self.0.auto_connect.borrow().clone()
+    }
+
+    /// Returns the distinct usable VPN Gate regions in code order.
+    pub async fn auto_connect_regions(&self) -> Vec<RegionOption> {
+        self.0
+            .nodes
+            .read()
+            .await
+            .iter()
+            .filter(|node| node.availability == NodeAvailability::Available)
+            .filter_map(|node| {
+                let code = node.country_short.trim().to_uppercase();
+                (!code.is_empty()).then(|| (code, node.country_long.clone()))
+            })
+            .fold(
+                BTreeMap::<String, String>::new(),
+                |mut regions, (code, name)| {
+                    regions.entry(code).or_insert(name);
+                    regions
+                },
+            )
+            .into_iter()
+            .map(|(code, name)| RegionOption { code, name })
+            .collect()
+    }
+
+    /// Validates, persists, and activates a new automatic connection policy.
+    pub async fn set_auto_connect_config(
+        &self,
+        config: AutoConnectConfig,
+    ) -> Result<AutoConnectConfig, ServiceError> {
+        let config = config
+            .normalized()
+            .map_err(ServiceError::InvalidAutoConnectConfig)?;
+        let _update = self.0.auto_connect_update.lock().await;
+        self.0.store.save_auto_connect_config(&config).await?;
+        self.0.auto_connect.send_replace(config.clone());
+        self.emit(AppEvent::AutoConnection(config.clone()));
+        self.trigger_auto_connect();
+        Ok(config)
     }
 
     /// Refreshes nodes atomically; a failed download leaves the previous snapshot intact.
@@ -273,11 +347,20 @@ impl AppState {
             at: info.at,
         });
         self.trigger_automatic_tests();
+        self.trigger_auto_connect();
         Ok(info)
     }
 
     /// Requests a make-before-break switch and waits for its result.
     pub async fn connect(&self, node_id: NodeId) -> Result<ConnectionState, ServiceError> {
+        let node = self
+            .node(&node_id)
+            .await
+            .ok_or(ServiceError::NodeNotFound)?;
+        if node.availability != NodeAvailability::Available || node.openvpn.is_none() {
+            return Err(ServiceError::NodeUnavailable);
+        }
+        self.disable_auto_connect().await;
         let (response_tx, response_rx) = oneshot::channel();
         self.0
             .connection_commands
@@ -292,6 +375,7 @@ impl AppState {
 
     /// Disconnects the active relay and stops its worker.
     pub async fn disconnect(&self) -> Result<ConnectionState, ServiceError> {
+        self.disable_auto_connect().await;
         let (response_tx, response_rx) = oneshot::channel();
         self.0
             .connection_commands
@@ -301,6 +385,23 @@ impl AppState {
             .await
             .map_err(|_| ServiceError::ShuttingDown)?;
         response_rx.await.map_err(|_| ServiceError::ShuttingDown)?
+    }
+
+    async fn disable_auto_connect(&self) {
+        let _update = self.0.auto_connect_update.lock().await;
+        let mut config = self.auto_connect_config();
+        if !config.enabled {
+            return;
+        }
+        config.enabled = false;
+        self.0.auto_connect.send_replace(config.clone());
+        self.emit(AppEvent::AutoConnection(config.clone()));
+        if let Err(error) = self.0.store.save_auto_connect_config(&config).await {
+            tracing::warn!(
+                error = %error,
+                "failed to persist disabled automatic connection policy"
+            );
+        }
     }
 
     /// Adds an isolated quality test to the bounded queue.
@@ -425,6 +526,10 @@ impl AppState {
         let _triggered = self.0.automatic_test_trigger.try_send(());
     }
 
+    fn trigger_auto_connect(&self) {
+        let _triggered = self.0.auto_connect_trigger.try_send(());
+    }
+
     async fn schedule_automatic_tests(&self) -> Result<usize, ServiceError> {
         let tested = self
             .0
@@ -512,18 +617,70 @@ fn refresh_info(stats: ParseStats) -> RefreshInfo {
     }
 }
 
-async fn connection_actor(state: AppState, mut commands: mpsc::Receiver<ConnectionCommand>) {
+async fn connection_actor(
+    state: AppState,
+    mut commands: mpsc::Receiver<ConnectionCommand>,
+    mut auto_connect_triggers: mpsc::Receiver<()>,
+) {
     let mut active: Option<ActiveConnection> = None;
+    let mut auto_connect_config = state.0.auto_connect.subscribe();
+    let mut auto_failures = HashMap::<NodeId, tokio::time::Instant>::new();
+    let mut auto_retry_at = None;
+    let mut auto_retry_delay = AUTO_RECONNECT_INITIAL;
     let mut health_check = tokio::time::interval(Duration::from_secs(1));
     health_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        let scheduled_retry = auto_retry_at;
+        let retry = async move {
+            match scheduled_retry {
+                Some(at) => tokio::time::sleep_until(at).await,
+                None => pending::<()>().await,
+            }
+        };
+        tokio::pin!(retry);
         tokio::select! {
             () = state.0.shutdown.cancelled() => break,
+            () = &mut retry => {
+                auto_retry_at = attempt_auto_connect(
+                    &state,
+                    &mut active,
+                    &mut auto_failures,
+                    &mut auto_retry_delay,
+                ).await;
+            }
+            changed = auto_connect_config.changed() => {
+                if changed.is_err() {
+                    break;
+                }
+                auto_failures.clear();
+                auto_retry_delay = AUTO_RECONNECT_INITIAL;
+                auto_retry_at = attempt_auto_connect(
+                    &state,
+                    &mut active,
+                    &mut auto_failures,
+                    &mut auto_retry_delay,
+                ).await;
+            }
+            trigger = auto_connect_triggers.recv() => {
+                if trigger.is_none() {
+                    break;
+                }
+                auto_retry_at = attempt_auto_connect(
+                    &state,
+                    &mut active,
+                    &mut auto_failures,
+                    &mut auto_retry_delay,
+                ).await;
+            }
             _ = health_check.tick(), if active.is_some() => {
                 let worker_id = active.as_ref().map(|current| current.worker_id);
                 if let Some(worker_id) = worker_id {
                     if !state.0.netd.worker_ready(worker_id).await.unwrap_or(false) {
                         if let Some(failed) = active.take() {
+                            auto_failures.insert(
+                                failed.node_id.clone(),
+                                tokio::time::Instant::now() + AUTO_NODE_COOLDOWN,
+                            );
                             state.0.active_worker.send_replace(None);
                             let connection = ConnectionState::Failed {
                                 node_id: failed.node_id,
@@ -535,6 +692,14 @@ async fn connection_actor(state: AppState, mut commands: mpsc::Receiver<Connecti
                             if let Err(error) = state.0.netd.stop_worker(worker_id).await {
                                 tracing::warn!(error = %error, worker.id = %worker_id, "failed to stop disconnected worker");
                             }
+                            if state.0.auto_connect.borrow().enabled {
+                                auto_retry_at = Some(
+                                    tokio::time::Instant::now() + auto_retry_delay,
+                                );
+                                auto_retry_delay = auto_retry_delay
+                                    .saturating_mul(2)
+                                    .min(AUTO_RECONNECT_MAX);
+                            }
                         }
                     }
                 }
@@ -544,9 +709,15 @@ async fn connection_actor(state: AppState, mut commands: mpsc::Receiver<Connecti
                 match command {
                     ConnectionCommand::Connect { node_id, response } => {
                         let result = switch_connection(&state, &mut active, node_id).await;
+                        auto_retry_at = None;
+                        auto_failures.clear();
+                        auto_retry_delay = AUTO_RECONNECT_INITIAL;
                         let _sent = response.send(result);
                     }
                     ConnectionCommand::Disconnect { response } => {
+                        auto_retry_at = None;
+                        auto_failures.clear();
+                        auto_retry_delay = AUTO_RECONNECT_INITIAL;
                         state.0.active_worker.send_replace(None);
                         let connection = ConnectionState::Disconnected;
                         state.0.connection_state.send_replace(connection.clone());
@@ -566,6 +737,69 @@ async fn connection_actor(state: AppState, mut commands: mpsc::Receiver<Connecti
     if let Some(old) = active {
         if let Err(error) = state.0.netd.stop_worker(old.worker_id).await {
             tracing::warn!(error = %error, worker.id = %old.worker_id, "failed to stop worker during shutdown");
+        }
+    }
+}
+
+async fn attempt_auto_connect(
+    state: &AppState,
+    active: &mut Option<ActiveConnection>,
+    failures: &mut HashMap<NodeId, tokio::time::Instant>,
+    retry_delay: &mut Duration,
+) -> Option<tokio::time::Instant> {
+    let config = state.auto_connect_config();
+    if !config.enabled {
+        failures.clear();
+        *retry_delay = AUTO_RECONNECT_INITIAL;
+        return None;
+    }
+
+    let now = tokio::time::Instant::now();
+    failures.retain(|_, retry_at| *retry_at > now);
+    let tests = match state.latest_tests().await {
+        Ok(tests) => tests,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to load IPPure results for automatic connection");
+            let retry_at = now + *retry_delay;
+            *retry_delay = retry_delay.saturating_mul(2).min(AUTO_RECONNECT_MAX);
+            return Some(retry_at);
+        }
+    };
+    let nodes = state.nodes().await;
+    let excluded = failures.keys().cloned().collect::<HashSet<_>>();
+    let Some(node_id) = select_auto_connect_node(&nodes, &tests, &config, &excluded) else {
+        let has_cooled_down_candidate =
+            select_auto_connect_node(&nodes, &tests, &config, &HashSet::new()).is_some();
+        return has_cooled_down_candidate
+            .then(|| failures.values().copied().min())
+            .flatten();
+    };
+
+    if active
+        .as_ref()
+        .is_some_and(|connection| connection.node_id == node_id)
+    {
+        *retry_delay = AUTO_RECONNECT_INITIAL;
+        return failures.values().copied().min();
+    }
+
+    match switch_connection(state, active, node_id.clone()).await {
+        Ok(_) => {
+            *retry_delay = AUTO_RECONNECT_INITIAL;
+            tracing::info!(node.id = %node_id, "automatic connection selected node");
+            failures.values().copied().min()
+        }
+        Err(error) => {
+            let failed_at = tokio::time::Instant::now();
+            failures.insert(node_id.clone(), failed_at + AUTO_NODE_COOLDOWN);
+            let retry_at = failed_at + *retry_delay;
+            *retry_delay = retry_delay.saturating_mul(2).min(AUTO_RECONNECT_MAX);
+            tracing::warn!(
+                error = %error,
+                node.id = %node_id,
+                "automatic connection attempt failed"
+            );
+            Some(retry_at)
         }
     }
 }
@@ -774,6 +1008,7 @@ async fn run_test(state: &AppState, job: TestJob) {
         operation_id: job.operation_id,
         state: test_state,
     });
+    state.trigger_auto_connect();
     state.trigger_automatic_tests();
 }
 

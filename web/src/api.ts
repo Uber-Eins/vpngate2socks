@@ -1,5 +1,7 @@
 import type {
   ApiFailure,
+  AutoConnectConfig,
+  AutoConnectSettings,
   ConnectionState,
   NodesPage,
   SessionState,
@@ -101,6 +103,17 @@ export const connect = (nodeId: string): Promise<ConnectionState> =>
 
 export const disconnect = (): Promise<ConnectionState> =>
   request("/api/v1/connection", { method: "DELETE" });
+
+export const autoConnection = (): Promise<AutoConnectSettings> =>
+  request("/api/v1/auto-connection");
+
+export const updateAutoConnection = (
+  config: AutoConnectConfig
+): Promise<AutoConnectSettings> =>
+  request("/api/v1/auto-connection", {
+    method: "PUT",
+    body: JSON.stringify(config)
+  });
 
 export async function startTest(nodeId: string): Promise<string> {
   const result = await request<{ operationId: string }>(

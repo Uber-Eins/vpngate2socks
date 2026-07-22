@@ -18,6 +18,19 @@ podman compose up --build
 
 WebUI 位于 `http://127.0.0.1:8080`，SOCKS5 位于 `127.0.0.1:1080`。Compose 只把端口发布到主机回环地址；容器内的 `0.0.0.0` 绑定由 `VPNGATE2SOCKS_CONTAINER_BIND=true` 显式授权，不能用于直接暴露容器 IP。
 
+### Quadlet
+
+仓库中的 `v2s.container` 可直接用于 rootless Quadlet，默认拉取 `ghcr.io/uber-eins/vpngate2socks:latest`，并将 WebUI/SOCKS5 分别发布到 `127.0.0.1:28080` 与 `127.0.0.1:21080`：
+
+```bash
+install -Dm644 v2s.container ~/.config/containers/systemd/v2s.container
+# 按需编辑 VPNGATE2SOCKS_UPSTREAM
+systemctl --user daemon-reload
+systemctl --user enable --now v2s.service
+```
+
+配置使用只读根文件系统、持久化 named volume、所需的最小 capability 集合及 `/dev/net/tun`。如需上游认证或 LAN/TLS 配置，可通过 `v2s.container.d/*.conf` drop-in 增加 `Environment=` 或 `Secret=`。
+
 推荐用 Podman secret 提供密码，而不是把密码放进环境变量：
 
 ```bash
@@ -66,6 +79,13 @@ podman run --rm \
 - 可用节点没有持久化的 IPPure 结果时会自动进入有界测试队列；高评分、低 Ping 节点优先。失败记录视为一次已完成检测，避免故障节点无限重试，可从 WebUI 手动重新检测。
 - 测试队列默认最多并行 3 个。每个测试使用临时 worker，经其 SOCKS5 以远端 DNS 请求 IPPure，不会修改活动 relay；手动与自动请求会按节点去重。
 
+## 自动连接
+
+- WebUI 可启用持久化自动连接策略，并按 VPN Gate 地区代码、IPPure 广播/原生分类及住宅属性筛选节点。
+- 不限制 IPPure 属性时，尚未检测的节点也可参与选择；选择广播/原生或住宅条件后，只使用已有成功检测结果的节点。
+- 匹配节点始终按带宽优先，评分与 Ping 用作稳定的同带宽排序条件。
+- 活动隧道意外中断后会立即闭锁 SOCKS 出口，短期避开故障节点并以有界退避自动重连。手动连接或断开会关闭自动策略，避免违背显式操作。
+
 ## API
 
 | 方法 | 路径 | 用途 |
@@ -73,6 +93,7 @@ podman run --rm \
 | `GET` | `/api/v1/nodes` | 分页、搜索、排序和最近测试 |
 | `POST` | `/api/v1/nodes/refresh` | 手动刷新 |
 | `PUT` / `DELETE` | `/api/v1/connection` | 切换 / 断开 |
+| `GET` / `PUT` | `/api/v1/auto-connection` | 读取 / 更新自动连接策略与地区选项 |
 | `POST` | `/api/v1/nodes/{nodeId}/tests` | 排队隔离测试 |
 | `GET` | `/api/v1/tests/{operationId}` | 测试状态 |
 | `GET` | `/api/v1/status` | relay、队列、刷新和 helper 状态 |

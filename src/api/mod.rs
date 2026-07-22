@@ -23,8 +23,8 @@ use tower_http::{
 };
 
 use crate::{
-    domain::{NodeId, NodeSummary, OperationId, TestState},
-    service::{AppState, ServiceError},
+    domain::{AutoConnectConfig, NodeId, NodeSummary, OperationId, TestState},
+    service::{AppState, RegionOption, ServiceError},
 };
 
 use self::auth::AuthManager;
@@ -99,6 +99,9 @@ impl From<ServiceError> for ApiError {
             ServiceError::RefreshBusy => (StatusCode::CONFLICT, "refreshBusy"),
             ServiceError::QueueFull => (StatusCode::TOO_MANY_REQUESTS, "testQueueFull"),
             ServiceError::ShuttingDown => (StatusCode::SERVICE_UNAVAILABLE, "shuttingDown"),
+            ServiceError::InvalidAutoConnectConfig(_) => {
+                (StatusCode::BAD_REQUEST, "invalidAutoConnectConfig")
+            }
             ServiceError::Refresh(_) => (StatusCode::BAD_GATEWAY, "refreshFailed"),
             ServiceError::Worker(_) => (StatusCode::BAD_GATEWAY, "workerFailed"),
             ServiceError::Store(_) => (StatusCode::INTERNAL_SERVER_ERROR, "storageFailed"),
@@ -118,6 +121,10 @@ pub fn router(app: AppState) -> Router {
         .route("/nodes", get(list_nodes))
         .route("/nodes/refresh", post(refresh_nodes))
         .route("/connection", put(connect).delete(disconnect))
+        .route(
+            "/auto-connection",
+            get(get_auto_connection).put(update_auto_connection),
+        )
         .route("/nodes/{node_id}/tests", post(start_test))
         .route("/tests/{operation_id}", get(test_status))
         .route("/status", get(status))
@@ -311,6 +318,34 @@ async fn disconnect(State(state): State<ApiState>) -> Result<impl IntoResponse, 
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+struct AutoConnectSettings {
+    config: AutoConnectConfig,
+    regions: Vec<RegionOption>,
+}
+
+async fn auto_connect_settings(app: &AppState) -> AutoConnectSettings {
+    AutoConnectSettings {
+        config: app.auto_connect_config(),
+        regions: app.auto_connect_regions().await,
+    }
+}
+
+async fn get_auto_connection(State(state): State<ApiState>) -> Json<AutoConnectSettings> {
+    Json(auto_connect_settings(&state.app).await)
+}
+
+async fn update_auto_connection(
+    State(state): State<ApiState>,
+    payload: Result<Json<AutoConnectConfig>, JsonRejection>,
+) -> Result<Json<AutoConnectSettings>, ApiError> {
+    let Json(config) = payload
+        .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "invalidJson", "请求 JSON 无效"))?;
+    state.app.set_auto_connect_config(config).await?;
+    Ok(Json(auto_connect_settings(&state.app).await))
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 struct AcceptedOperation {
     operation_id: OperationId,
 }
@@ -431,7 +466,13 @@ mod tests {
             .await
             .expect("in-memory store");
         let shutdown = CancellationToken::new();
-        let state = AppState::new(config, upstream, store, shutdown.clone());
+        let state = AppState::new(
+            config,
+            upstream,
+            store,
+            crate::domain::AutoConnectConfig::default(),
+            shutdown.clone(),
+        );
         (router(state), shutdown, directory)
     }
 
@@ -489,6 +530,99 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn automatic_connection_policy_is_normalized_and_returned() {
+        let (router, shutdown, _directory) = test_router().await;
+        let initial = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/auto-connection")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(initial.status(), StatusCode::OK);
+        let initial_body = initial
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let initial_value: serde_json::Value =
+            serde_json::from_slice(&initial_body).expect("JSON body");
+        assert_eq!(initial_value["config"]["enabled"], false);
+        assert_eq!(initial_value["regions"], serde_json::json!([]));
+
+        let updated = router
+            .clone()
+            .oneshot(
+                Request::put("/api/v1/auto-connection")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"enabled":true,"region":" jp ","ipType":"native","residential":"residential"}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(updated.status(), StatusCode::OK);
+        let updated_body = updated
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let updated_value: serde_json::Value =
+            serde_json::from_slice(&updated_body).expect("JSON body");
+        assert_eq!(updated_value["config"]["enabled"], true);
+        assert_eq!(updated_value["config"]["region"], "JP");
+        assert_eq!(updated_value["config"]["ipType"], "native");
+
+        let invalid = router
+            .clone()
+            .oneshot(
+                Request::put("/api/v1/auto-connection")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        r#"{"enabled":true,"region":"TOO-LONG-REGION","ipType":"any","residential":"any"}"#,
+                    ))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+
+        let disconnected = router
+            .clone()
+            .oneshot(
+                Request::delete("/api/v1/connection")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(disconnected.status(), StatusCode::OK);
+        let after_disconnect = router
+            .oneshot(
+                Request::get("/api/v1/auto-connection")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        let after_disconnect_body = after_disconnect
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let after_disconnect_value: serde_json::Value =
+            serde_json::from_slice(&after_disconnect_body).expect("JSON body");
+        assert_eq!(after_disconnect_value["config"]["enabled"], false);
+        shutdown.cancel();
+    }
+
+    #[tokio::test]
     async fn lan_session_requires_cookie_and_csrf_for_mutations() {
         let directory = tempdir().expect("temporary directory");
         let mut config = AppConfig::test_config(directory.path().to_path_buf());
@@ -505,7 +639,13 @@ mod tests {
             .await
             .expect("in-memory store");
         let shutdown = CancellationToken::new();
-        let router = router(AppState::new(config, upstream, store, shutdown.clone()));
+        let router = router(AppState::new(
+            config,
+            upstream,
+            store,
+            crate::domain::AutoConnectConfig::default(),
+            shutdown.clone(),
+        ));
 
         let unauthorized = router
             .clone()

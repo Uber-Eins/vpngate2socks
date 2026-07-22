@@ -46,6 +46,26 @@ export interface NodesPage {
   total: number;
 }
 
+export type IpTypeFilter = "any" | "native" | "broadcast";
+export type ResidentialFilter = "any" | "residential" | "nonResidential";
+
+export interface AutoConnectConfig {
+  enabled: boolean;
+  region?: string;
+  ipType: IpTypeFilter;
+  residential: ResidentialFilter;
+}
+
+export interface RegionOption {
+  code: string;
+  name: string;
+}
+
+export interface AutoConnectSettings {
+  config: AutoConnectConfig;
+  regions: RegionOption[];
+}
+
 export type ConnectionState =
   | { state: "disconnected" }
   | { state: "connecting"; nodeId: string; workerId: string; since: string }
@@ -95,6 +115,7 @@ export interface ApiFailure {
 
 export type AppEvent =
   | { type: "connection"; data: ConnectionState }
+  | { type: "autoConnection"; data: AutoConnectConfig }
   | { type: "test"; data: { operationId: string; state: TestState } }
   | {
       type: "nodesRefreshed";

@@ -6,7 +6,9 @@ use chrono::{DateTime, Utc};
 use sqlx::{ConnectOptions as _, Row as _, sqlite::SqlitePoolOptions};
 use thiserror::Error;
 
-use crate::domain::{IpPureResult, NodeId, TestRecord};
+use crate::domain::{
+    AutoConnectConfig, IpPureResult, IpTypeFilter, NodeId, ResidentialFilter, TestRecord,
+};
 
 /// Cloneable asynchronous `SQLite` repository.
 #[derive(Debug, Clone)]
@@ -29,6 +31,8 @@ pub enum StoreError {
     DurationOverflow,
     #[error("test record violates persistence invariants")]
     InvalidRecord,
+    #[error("automatic connection configuration violates persistence invariants")]
+    InvalidAutoConnectConfig,
 }
 
 impl Store {
@@ -163,6 +167,57 @@ impl Store {
         Ok(records)
     }
 
+    /// Loads the singleton automatic connection policy.
+    pub async fn auto_connect_config(&self) -> Result<AutoConnectConfig, StoreError> {
+        let row = sqlx::query(
+            r"
+            SELECT enabled, region, ip_type, residential
+            FROM auto_connect_config
+            WHERE id = 1
+            ",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let ip_type = IpTypeFilter::from_stored(&row.try_get::<String, _>("ip_type")?)
+            .ok_or(StoreError::InvalidAutoConnectConfig)?;
+        let residential = ResidentialFilter::from_stored(&row.try_get::<String, _>("residential")?)
+            .ok_or(StoreError::InvalidAutoConnectConfig)?;
+        AutoConnectConfig {
+            enabled: row.try_get("enabled")?,
+            region: row.try_get("region")?,
+            ip_type,
+            residential,
+        }
+        .normalized()
+        .map_err(|_| StoreError::InvalidAutoConnectConfig)
+    }
+
+    /// Atomically persists the singleton automatic connection policy.
+    pub async fn save_auto_connect_config(
+        &self,
+        config: &AutoConnectConfig,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            r"
+            INSERT INTO auto_connect_config (
+                id, enabled, region, ip_type, residential
+            ) VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                enabled = excluded.enabled,
+                region = excluded.region,
+                ip_type = excluded.ip_type,
+                residential = excluded.residential
+            ",
+        )
+        .bind(config.enabled)
+        .bind(config.region.as_deref())
+        .bind(config.ip_type.as_str())
+        .bind(config.residential.as_str())
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
     /// Removes old results only when their nodes are absent from the current snapshot.
     pub async fn cleanup_stale(
         &self,
@@ -279,5 +334,37 @@ mod tests {
             store.save_test(&record).await,
             Err(StoreError::InvalidRecord)
         ));
+    }
+
+    #[tokio::test]
+    async fn automatic_connection_config_defaults_and_round_trips() {
+        let store = Store::open("sqlite::memory:")
+            .await
+            .expect("in-memory database opens");
+        assert_eq!(
+            store
+                .auto_connect_config()
+                .await
+                .expect("default configuration loads"),
+            AutoConnectConfig::default()
+        );
+
+        let config = AutoConnectConfig {
+            enabled: true,
+            region: Some("JP".to_owned()),
+            ip_type: IpTypeFilter::Native,
+            residential: ResidentialFilter::Residential,
+        };
+        store
+            .save_auto_connect_config(&config)
+            .await
+            .expect("configuration write succeeds");
+        assert_eq!(
+            store
+                .auto_connect_config()
+                .await
+                .expect("saved configuration loads"),
+            config
+        );
     }
 }

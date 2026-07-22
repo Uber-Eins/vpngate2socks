@@ -1,6 +1,7 @@
 //! Linux-first, leak-resistant VPN Gate to local SOCKS5 service.
 
 pub mod api;
+mod auto_connect;
 mod automatic_tests;
 pub mod config;
 pub mod domain;
@@ -107,7 +108,17 @@ async fn run_control_plane(config: AppConfig) -> anyhow::Result<()> {
     let store = storage::Store::open(&config.database_url)
         .await
         .context("failed to open application database")?;
-    let state = service::AppState::new(config.clone(), upstream, store, shutdown.clone());
+    let auto_connect_config = store
+        .auto_connect_config()
+        .await
+        .context("failed to load automatic connection configuration")?;
+    let state = service::AppState::new(
+        config.clone(),
+        upstream,
+        store,
+        auto_connect_config,
+        shutdown.clone(),
+    );
     state.start_refresh_loop();
 
     tracing::info!(

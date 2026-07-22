@@ -9,6 +9,7 @@ export function parseAppEvent(raw: string): AppEvent | undefined {
     const type = value.type;
     if (
       type !== "connection" &&
+      type !== "autoConnection" &&
       type !== "test" &&
       type !== "nodesRefreshed" &&
       type !== "refreshFailed" &&

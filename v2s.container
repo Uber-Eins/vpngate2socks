@@ -1,0 +1,37 @@
+[Unit]
+Description=Leak-resistant VPN Gate to SOCKS5 gateway
+
+[Container]
+Image=ghcr.io/uber-eins/vpngate2socks:latest
+ContainerName=v2s
+Pull=newer
+AutoUpdate=registry
+
+# Change this endpoint in the file or with a Quadlet drop-in when the host
+# SOCKS5 proxy does not listen on port 1080.
+Environment=VPNGATE2SOCKS_UPSTREAM=host.containers.internal:1080
+Environment=RUST_LOG=vpngate2socks=info,tower_http=info
+
+DropCapability=all
+AddCapability=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_KILL CAP_NET_ADMIN CAP_SETGID CAP_SETPCAP CAP_SETUID CAP_SYS_ADMIN
+AddDevice=/dev/net/tun:/dev/net/tun
+NoNewPrivileges=true
+ReadOnly=true
+Tmpfs=/run:size=16m,mode=0755
+Tmpfs=/tmp:size=16m,mode=1777
+Volume=vpngate2socks-data:/var/lib/vpngate2socks
+PublishPort=127.0.0.1:28080:8080
+PublishPort=127.0.0.1:21080:1080
+Sysctl=net.ipv4.ip_forward=1 net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1
+PidsLimit=512
+StopTimeout=45
+LogDriver=journald
+
+[Service]
+Restart=always
+RestartSec=5s
+TimeoutStartSec=180
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target
