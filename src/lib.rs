@@ -140,13 +140,12 @@ async fn run_control_plane(config: AppConfig) -> anyhow::Result<()> {
         });
         let router = api::router(web_state).into_make_service();
         if let Some(tls) = tls {
-            let tls = axum_server::tls_rustls::RustlsConfig::from_pem_file(
+            let tls = axum_server::tls_openssl::OpenSSLConfig::from_pem_file(
                 tls.certificate,
                 tls.private_key,
             )
-            .await
             .context("failed to load TLS certificate or key")?;
-            axum_server::bind_rustls(web_address, tls)
+            axum_server::bind_openssl(web_address, tls)
                 .handle(handle)
                 .serve(router)
                 .await

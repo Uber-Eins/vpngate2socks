@@ -44,8 +44,8 @@ services:
         - CMD-SHELL
         - >-
           if [ -n "$${VPNGATE2SOCKS_TLS_CERT:-}" ]; then
-          curl --noproxy '*' -fk https://127.0.0.1:8080/healthz;
-          else curl --noproxy '*' -f http://127.0.0.1:8080/healthz; fi
+          wget -q -Y off -T 3 --no-check-certificate -O /dev/null https://127.0.0.1:8080/healthz;
+          else wget -q -Y off -T 3 -O /dev/null http://127.0.0.1:8080/healthz; fi
       interval: 30s
       timeout: 3s
       start_period: 10s
