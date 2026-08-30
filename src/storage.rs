@@ -161,7 +161,9 @@ impl Store {
 
     /// Loads all latest results, keyed by validated node identifiers.
     pub async fn latest_tests(&self) -> Result<HashMap<NodeId, TestRecord>, StoreError> {
-        let rows = sqlx::query(LATEST_TEST_COLUMNS).fetch_all(&self.pool).await?;
+        let rows = sqlx::query(LATEST_TEST_COLUMNS)
+            .fetch_all(&self.pool)
+            .await?;
 
         let mut records = HashMap::with_capacity(rows.len());
         for row in rows {
