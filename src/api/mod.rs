@@ -668,6 +668,24 @@ mod tests {
             .expect("response");
         assert_eq!(health.status(), StatusCode::OK);
 
+        let status = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/status")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(status.status(), StatusCode::OK);
+        let body = status.into_body().collect().await.expect("body").to_bytes();
+        let value: serde_json::Value = serde_json::from_slice(&body).expect("JSON body");
+        assert_eq!(value["connection"]["state"], "disconnected");
+        assert!(
+            value.get("lastRefresh").is_none(),
+            "an unavailable refresh must be omitted instead of serialized as null"
+        );
+
         let nodes = router
             .oneshot(
                 Request::get("/api/v1/nodes?page=1&pageSize=50")

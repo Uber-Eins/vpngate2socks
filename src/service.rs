@@ -123,6 +123,7 @@ pub struct StatusSnapshot {
     pub queued_tests: usize,
     pub running_tests: usize,
     pub upstream_state: UpstreamState,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_refresh: Option<RefreshInfo>,
     pub lan_mode: bool,
     pub tls_configured: bool,
