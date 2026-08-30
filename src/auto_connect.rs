@@ -20,7 +20,7 @@ pub fn select_node(
         .filter(|node| node.availability == NodeAvailability::Available)
         .filter(|node| !excluded.contains(&node.id))
         .filter(|node| matches_region(node, config))
-        .filter(|node| matches_ip_traits(tests.get(&node.id), config))
+        .filter(|node| matches_ip_traits(tests.get(&node.id), config.ip_type, config.residential))
         .max_by(|left, right| {
             left.speed_bps
                 .cmp(&right.speed_bps)
@@ -43,19 +43,29 @@ fn matches_region(node: &VpnNode, config: &AutoConnectConfig) -> bool {
         .is_none_or(|region| node.country_short.eq_ignore_ascii_case(region))
 }
 
-fn matches_ip_traits(record: Option<&TestRecord>, config: &AutoConnectConfig) -> bool {
-    if config.ip_type == IpTypeFilter::Any && config.residential == ResidentialFilter::Any {
+/// Matches a node's latest `IPPure` result against the two classification filters.
+///
+/// Both the automatic connection policy and the Web API node list use this, so a
+/// node browsed with `ipType=native` is exactly a node the policy would consider.
+/// A filter other than `Any` requires a successful test, so untested nodes drop out.
+#[must_use]
+pub fn matches_ip_traits(
+    record: Option<&TestRecord>,
+    ip_type: IpTypeFilter,
+    residential: ResidentialFilter,
+) -> bool {
+    if ip_type == IpTypeFilter::Any && residential == ResidentialFilter::Any {
         return true;
     }
     let Some(result) = record.and_then(|record| record.result.as_ref()) else {
         return false;
     };
-    let ip_type_matches = match config.ip_type {
+    let ip_type_matches = match ip_type {
         IpTypeFilter::Any => true,
         IpTypeFilter::Native => !result.is_broadcast,
         IpTypeFilter::Broadcast => result.is_broadcast,
     };
-    let residential_matches = match config.residential {
+    let residential_matches = match residential {
         ResidentialFilter::Any => true,
         ResidentialFilter::Residential => result.is_residential,
         ResidentialFilter::NonResidential => !result.is_residential,

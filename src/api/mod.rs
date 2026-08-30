@@ -2,7 +2,9 @@
 
 mod auth;
 
-use std::{cmp::Ordering, convert::Infallible, str::FromStr as _, time::Duration};
+use std::{
+    cmp::Ordering, collections::HashMap, convert::Infallible, str::FromStr as _, time::Duration,
+};
 
 use axum::{
     Json, Router,
@@ -23,7 +25,11 @@ use tower_http::{
 };
 
 use crate::{
-    domain::{AutoConnectConfig, NodeId, NodeSummary, OperationId, TestState},
+    auto_connect::matches_ip_traits,
+    domain::{
+        AutoConnectConfig, IpTypeFilter, NodeAvailability, NodeId, NodeSummary, OperationId,
+        ResidentialFilter, TestRecord, TestState,
+    },
     service::{AppState, RegionOption, ServiceError},
 };
 
@@ -197,6 +203,15 @@ struct NodesQuery {
     sort: SortKey,
     #[serde(default)]
     order: SortOrder,
+    /// Two-letter region code, matched case-insensitively against the node country.
+    #[serde(default)]
+    region: Option<String>,
+    #[serde(default)]
+    ip_type: IpTypeFilter,
+    #[serde(default)]
+    residential: ResidentialFilter,
+    #[serde(default)]
+    availability: AvailabilityFilter,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -207,6 +222,26 @@ enum SortKey {
     Ping,
     Speed,
     Sessions,
+    /// `IPPure` fraud score; nodes without a successful test always sort last.
+    Fraud,
+}
+
+/// Whether the list is restricted to nodes this version can actually connect to.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum AvailabilityFilter {
+    #[default]
+    Any,
+    Available,
+}
+
+impl AvailabilityFilter {
+    const fn matches(self, availability: NodeAvailability) -> bool {
+        match self {
+            Self::Any => true,
+            Self::Available => matches!(availability, NodeAvailability::Available),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -232,26 +267,40 @@ async fn list_nodes(
 ) -> Result<Json<NodesPage>, ApiError> {
     let Query(query) = query
         .map_err(|_| ApiError::new(StatusCode::BAD_REQUEST, "invalidQuery", "查询参数无效"))?;
-    if query.page == 0 || !(1..=200).contains(&query.page_size) || query.search.len() > 256 {
+    if query.page == 0
+        || !(1..=200).contains(&query.page_size)
+        || query.search.len() > 256
+        || query.region.as_ref().is_some_and(|region| region.len() > 8)
+    {
         return Err(ApiError::new(
             StatusCode::BAD_REQUEST,
             "invalidPagination",
             "分页或搜索参数无效",
         ));
     }
-    let snapshot = state.app.nodes().await;
-    let mut nodes = snapshot
-        .iter()
-        .filter(|node| node.matches_search(&query.search))
-        .collect::<Vec<_>>();
-    nodes.sort_by(|left, right| compare_nodes(left, right, query.sort, query.order));
-    let total = nodes.len();
-    let offset = query.page.saturating_sub(1).saturating_mul(query.page_size);
+    let region = query
+        .region
+        .as_deref()
+        .map(str::trim)
+        .filter(|region| !region.is_empty());
+    // The classification filters and the fraud sort both read test results, so the
+    // records are loaded before paging rather than only for the returned page.
     let tests = state
         .app
         .latest_tests()
         .await
         .map_err(ServiceError::Store)?;
+    let snapshot = state.app.nodes().await;
+    let mut nodes = snapshot
+        .iter()
+        .filter(|node| query.availability.matches(node.availability))
+        .filter(|node| region.is_none_or(|region| node.country_short.eq_ignore_ascii_case(region)))
+        .filter(|node| matches_ip_traits(tests.get(&node.id), query.ip_type, query.residential))
+        .filter(|node| node.matches_search(&query.search))
+        .collect::<Vec<_>>();
+    nodes.sort_by(|left, right| compare_nodes(left, right, &tests, query.sort, query.order));
+    let total = nodes.len();
+    let offset = query.page.saturating_sub(1).saturating_mul(query.page_size);
     let items = nodes
         .into_iter()
         .skip(offset)
@@ -269,27 +318,45 @@ async fn list_nodes(
 fn compare_nodes(
     left: &crate::domain::VpnNode,
     right: &crate::domain::VpnNode,
+    tests: &HashMap<NodeId, TestRecord>,
     key: SortKey,
     order: SortOrder,
 ) -> Ordering {
-    if matches!(key, SortKey::Ping) {
-        match (left.ping_ms, right.ping_ms) {
-            (Some(_), None) => return Ordering::Less,
-            (None, Some(_)) => return Ordering::Greater,
-            _ => {}
-        }
+    // Missing measurements sort last in both directions: "no ping" and "never tested"
+    // are the absence of a value, not the worst value.
+    let (left_fraud, right_fraud) = match key {
+        SortKey::Fraud => (fraud_score(tests, &left.id), fraud_score(tests, &right.id)),
+        _ => (None, None),
+    };
+    let unknown_last = match key {
+        SortKey::Ping => (left.ping_ms.is_none(), right.ping_ms.is_none()),
+        SortKey::Fraud => (left_fraud.is_none(), right_fraud.is_none()),
+        _ => (false, false),
+    };
+    match unknown_last {
+        (false, true) => return Ordering::Less,
+        (true, false) => return Ordering::Greater,
+        _ => {}
     }
     let ordering = match key {
         SortKey::Score => left.score.cmp(&right.score),
         SortKey::Ping => left.ping_ms.cmp(&right.ping_ms),
         SortKey::Speed => left.speed_bps.cmp(&right.speed_bps),
         SortKey::Sessions => left.sessions.cmp(&right.sessions),
+        SortKey::Fraud => left_fraud
+            .unwrap_or_default()
+            .total_cmp(&right_fraud.unwrap_or_default()),
     };
     match order {
         SortOrder::Asc => ordering,
         SortOrder::Desc => ordering.reverse(),
     }
     .then_with(|| left.id.cmp(&right.id))
+}
+
+fn fraud_score(tests: &HashMap<NodeId, TestRecord>, node_id: &NodeId) -> Option<f64> {
+    let record = tests.get(node_id)?;
+    Some(record.result.as_ref()?.fraud_score)
 }
 
 async fn refresh_nodes(State(state): State<ApiState>) -> Result<impl IntoResponse, ApiError> {
@@ -454,6 +521,117 @@ mod tests {
     };
 
     use super::*;
+
+    fn sortable_node(value: u8, ping_ms: Option<u32>) -> crate::domain::VpnNode {
+        crate::domain::VpnNode {
+            id: format!("{value:064x}").parse().expect("generated node id"),
+            hostname: format!("vpn-{value}"),
+            ip: std::net::Ipv4Addr::new(1, 1, 1, value),
+            score: u64::from(value),
+            ping_ms,
+            speed_bps: u64::from(value),
+            country_long: "Japan".to_owned(),
+            country_short: "JP".to_owned(),
+            sessions: u32::from(value),
+            uptime_ms: 1,
+            total_users: 1,
+            total_traffic_bytes: 1,
+            log_type: String::new(),
+            operator: String::new(),
+            message: String::new(),
+            tcp_port: std::num::NonZeroU16::new(443),
+            availability: NodeAvailability::Available,
+            openvpn: None,
+        }
+    }
+
+    fn scored(node: &crate::domain::VpnNode, fraud_score: f64) -> (NodeId, TestRecord) {
+        (
+            node.id.clone(),
+            TestRecord {
+                node_id: node.id.clone(),
+                result: Some(crate::domain::IpPureResult {
+                    fraud_score,
+                    is_residential: true,
+                    is_broadcast: false,
+                    exit_ip: None,
+                }),
+                duration_ms: 1,
+                tested_at: chrono::Utc::now(),
+                error: None,
+            },
+        )
+    }
+
+    #[test]
+    fn untested_nodes_sort_last_in_both_fraud_directions() {
+        let clean = sortable_node(1, Some(10));
+        let risky = sortable_node(2, Some(20));
+        let untested = sortable_node(3, Some(30));
+        let tests = HashMap::from([scored(&clean, 4.0), scored(&risky, 88.0)]);
+        let order_by = |order| {
+            let mut nodes = vec![&untested, &risky, &clean];
+            nodes.sort_by(|left, right| compare_nodes(left, right, &tests, SortKey::Fraud, order));
+            nodes
+                .into_iter()
+                .map(|node| node.hostname.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(order_by(SortOrder::Asc), ["vpn-1", "vpn-2", "vpn-3"]);
+        assert_eq!(order_by(SortOrder::Desc), ["vpn-2", "vpn-1", "vpn-3"]);
+    }
+
+    #[test]
+    fn nodes_without_a_ping_sort_last_in_both_directions() {
+        let fast = sortable_node(1, Some(10));
+        let slow = sortable_node(2, Some(20));
+        let unknown = sortable_node(3, None);
+        let order_by = |order| {
+            let mut nodes = vec![&unknown, &slow, &fast];
+            nodes.sort_by(|left, right| {
+                compare_nodes(left, right, &HashMap::new(), SortKey::Ping, order)
+            });
+            nodes
+                .into_iter()
+                .map(|node| node.hostname.clone())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(order_by(SortOrder::Asc), ["vpn-1", "vpn-2", "vpn-3"]);
+        assert_eq!(order_by(SortOrder::Desc), ["vpn-2", "vpn-1", "vpn-3"]);
+    }
+
+    #[tokio::test]
+    async fn node_filters_are_accepted_and_rejected_by_validation() {
+        let (router, shutdown, _directory) = test_router().await;
+        let filters = concat!(
+            "page=1&pageSize=50&region=jp&ipType=native&residential=residential",
+            "&availability=available&sort=fraud&order=asc"
+        );
+        let accepted = router
+            .clone()
+            .oneshot(
+                Request::get(format!("/api/v1/nodes?{filters}"))
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(accepted.status(), StatusCode::OK);
+
+        let rejected = router
+            .oneshot(
+                Request::get("/api/v1/nodes?region=far-too-long")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+
+        shutdown.cancel();
+    }
 
     async fn test_router() -> (Router, CancellationToken, tempfile::TempDir) {
         let directory = tempdir().expect("temporary directory");

@@ -35,6 +35,56 @@ pub enum StoreError {
     InvalidAutoConnectConfig,
 }
 
+/// Shared projection for both latest-test queries.
+const LATEST_TEST_COLUMNS: &str = r"
+    SELECT node_id, fraud_score, is_residential, is_broadcast, exit_ip,
+           duration_ms, tested_at, error
+    FROM node_tests
+    ";
+
+/// Rebuilds one record, validating every value loaded from disk.
+fn record_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<TestRecord, StoreError> {
+    let node_id = row
+        .try_get::<String, _>("node_id")?
+        .parse::<NodeId>()
+        .map_err(|_| StoreError::InvalidNodeId)?;
+    let fraud_score = row.try_get::<Option<f64>, _>("fraud_score")?;
+    let is_residential = row.try_get::<Option<bool>, _>("is_residential")?;
+    let is_broadcast = row.try_get::<Option<bool>, _>("is_broadcast")?;
+    let exit_ip = row
+        .try_get::<Option<String>, _>("exit_ip")?
+        .map(|value| value.parse().map_err(|_| StoreError::InvalidIp))
+        .transpose()?;
+    let result = match (fraud_score, is_residential, is_broadcast) {
+        (Some(fraud_score), Some(is_residential), Some(is_broadcast)) => {
+            if !fraud_score.is_finite() || !(0.0..=100.0).contains(&fraud_score) {
+                return Err(StoreError::InvalidRecord);
+            }
+            Some(IpPureResult {
+                fraud_score,
+                is_residential,
+                is_broadcast,
+                exit_ip,
+            })
+        }
+        (None, None, None) if exit_ip.is_none() => None,
+        _ => return Err(StoreError::InvalidRecord),
+    };
+    let duration_ms = u64::try_from(row.try_get::<i64, _>("duration_ms")?)
+        .map_err(|_| StoreError::DurationOverflow)?;
+    let error: Option<String> = row.try_get("error")?;
+    if result.is_some() == error.is_some() {
+        return Err(StoreError::InvalidRecord);
+    }
+    Ok(TestRecord {
+        node_id,
+        result,
+        duration_ms,
+        tested_at: row.try_get::<DateTime<Utc>, _>("tested_at")?,
+        error,
+    })
+}
+
 impl Store {
     /// Opens the database, enables WAL, and runs built-in migrations.
     pub async fn open(database_url: &str) -> Result<Self, StoreError> {
@@ -111,60 +161,23 @@ impl Store {
 
     /// Loads all latest results, keyed by validated node identifiers.
     pub async fn latest_tests(&self) -> Result<HashMap<NodeId, TestRecord>, StoreError> {
-        let rows = sqlx::query(
-            r"
-            SELECT node_id, fraud_score, is_residential, is_broadcast, exit_ip,
-                   duration_ms, tested_at, error
-            FROM node_tests
-            ",
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = sqlx::query(LATEST_TEST_COLUMNS).fetch_all(&self.pool).await?;
 
         let mut records = HashMap::with_capacity(rows.len());
         for row in rows {
-            let node_id = row
-                .try_get::<String, _>("node_id")?
-                .parse::<NodeId>()
-                .map_err(|_| StoreError::InvalidNodeId)?;
-            let fraud_score = row.try_get::<Option<f64>, _>("fraud_score")?;
-            let is_residential = row.try_get::<Option<bool>, _>("is_residential")?;
-            let is_broadcast = row.try_get::<Option<bool>, _>("is_broadcast")?;
-            let exit_ip = row
-                .try_get::<Option<String>, _>("exit_ip")?
-                .map(|value| value.parse().map_err(|_| StoreError::InvalidIp))
-                .transpose()?;
-            let result = match (fraud_score, is_residential, is_broadcast) {
-                (Some(fraud_score), Some(is_residential), Some(is_broadcast)) => {
-                    if !fraud_score.is_finite() || !(0.0..=100.0).contains(&fraud_score) {
-                        return Err(StoreError::InvalidRecord);
-                    }
-                    Some(IpPureResult {
-                        fraud_score,
-                        is_residential,
-                        is_broadcast,
-                        exit_ip,
-                    })
-                }
-                (None, None, None) if exit_ip.is_none() => None,
-                _ => return Err(StoreError::InvalidRecord),
-            };
-            let duration_ms = u64::try_from(row.try_get::<i64, _>("duration_ms")?)
-                .map_err(|_| StoreError::DurationOverflow)?;
-            let error: Option<String> = row.try_get("error")?;
-            if result.is_some() == error.is_some() {
-                return Err(StoreError::InvalidRecord);
-            }
-            let record = TestRecord {
-                node_id: node_id.clone(),
-                result,
-                duration_ms,
-                tested_at: row.try_get::<DateTime<Utc>, _>("tested_at")?,
-                error,
-            };
-            records.insert(node_id, record);
+            let record = record_from_row(&row)?;
+            records.insert(record.node_id.clone(), record);
         }
         Ok(records)
+    }
+
+    /// Loads the latest result for a single node, if one was ever recorded.
+    pub async fn latest_test(&self, node_id: &NodeId) -> Result<Option<TestRecord>, StoreError> {
+        let row = sqlx::query(&format!("{LATEST_TEST_COLUMNS} WHERE node_id = ?"))
+            .bind(node_id.as_str())
+            .fetch_optional(&self.pool)
+            .await?;
+        row.as_ref().map(record_from_row).transpose()
     }
 
     /// Loads the singleton automatic connection policy.

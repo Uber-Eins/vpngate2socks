@@ -640,6 +640,17 @@ impl ConnectionState {
     pub const fn is_ready(&self) -> bool {
         matches!(self, Self::Connected { .. })
     }
+
+    /// Node the state refers to, if the state names one.
+    #[must_use]
+    pub const fn node_id(&self) -> Option<&NodeId> {
+        match self {
+            Self::Disconnected => None,
+            Self::Connecting { node_id, .. }
+            | Self::Connected { node_id, .. }
+            | Self::Failed { node_id, .. } => Some(node_id),
+        }
+    }
 }
 
 /// Lifecycle of an isolated node quality test.

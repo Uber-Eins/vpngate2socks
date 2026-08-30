@@ -3,8 +3,12 @@ import { useState, type FormEvent } from "react";
 import * as api from "../api";
 import { zhCN as t } from "../i18n";
 import type { SessionState } from "../types";
-import { Notice } from "../ui/Notice";
+import { Button } from "../ui/Button";
+import { Notice } from "../ui/Feedback";
+import { CheckIcon, ShieldIcon } from "../ui/Icon";
 import { errorMessage } from "../utils/errorMessage";
+
+const POINTS = [t.loginPointIsolation, t.loginPointFailClosed, t.loginPointRemoteDns];
 
 export function Login({ onAuthenticated }: {
   onAuthenticated: (session: SessionState) => void;
@@ -29,46 +33,64 @@ export function Login({ onAuthenticated }: {
   };
 
   return (
-    <main className="login-shell">
-      <section className="login-intro" aria-label="产品说明">
-        <div className="brand-mark brand-mark--large" aria-hidden="true"><span /></div>
-        <p className="eyebrow">{t.brand}</p>
-        <h1>安全出口，从验证开始。</h1>
-        <p>{t.subtitle}</p>
-        <span className="security-stamp"><i aria-hidden="true" />{t.secureRoute}</span>
-      </section>
-      <form className="login-card" onSubmit={(event) => void submit(event)}>
-        <div>
-          <p className="section-kicker">AUTHENTICATION</p>
-          <h2>{t.loginTitle}</h2>
-        </div>
-        {window.location.protocol !== "https:" && (
-          <Notice tone="danger">{t.cleartextWarning}</Notice>
-        )}
-        <label>
-          <span>{t.username}</span>
-          <input
-            autoComplete="username"
-            value={username}
-            onChange={(event) => setUsername(event.target.value)}
-            required
-          />
-        </label>
-        <label>
-          <span>{t.password}</span>
-          <input
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            required
-          />
-        </label>
-        {error !== undefined && <p className="form-error" role="alert">{error}</p>}
-        <button className="button button--primary button--wide" type="submit" disabled={submitting}>
-          {submitting ? "验证中…" : t.login}
-        </button>
-      </form>
+    <main className="entry">
+      <div className="entry__card">
+        <aside className="entry__aside">
+          <span className="brand-mark"><ShieldIcon size={17} /></span>
+          <h1>{t.loginHeadline}</h1>
+          <p>{t.loginBody}</p>
+          <div className="entry__points">
+            {POINTS.map((point) => (
+              <span className="entry__point" key={point}>
+                <CheckIcon size={14} />
+                {point}
+              </span>
+            ))}
+          </div>
+        </aside>
+
+        <form className="entry__form" onSubmit={(event) => void submit(event)}>
+          <div>
+            <h2>{t.loginTitle}</h2>
+            <p className="entry__form-hint">{t.loginHint}</p>
+          </div>
+
+          {window.location.protocol !== "https:" && (
+            <Notice tone="danger">{t.cleartextWarning}</Notice>
+          )}
+
+          <div className="field">
+            <label className="field__label" htmlFor="login-username">{t.username}</label>
+            <input
+              id="login-username"
+              className="input"
+              autoComplete="username"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              required
+            />
+          </div>
+
+          <div className="field">
+            <label className="field__label" htmlFor="login-password">{t.password}</label>
+            <input
+              id="login-password"
+              className="input"
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              required
+            />
+          </div>
+
+          {error !== undefined && <p className="entry__error" role="alert">{error}</p>}
+
+          <Button type="submit" variant="primary" wide busy={submitting}>
+            {submitting ? t.loggingIn : t.login}
+          </Button>
+        </form>
+      </div>
     </main>
   );
 }

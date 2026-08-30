@@ -35,68 +35,90 @@ const node: VpnNode = {
   }
 };
 
+function renderTable(overrides: Partial<Parameters<typeof NodeTable>[0]> = {}) {
+  const props = {
+    nodes: [node],
+    activeNodeId: undefined,
+    operations: {},
+    busy: undefined,
+    loading: false,
+    sort: "score" as const,
+    order: "desc" as const,
+    onSort: vi.fn(),
+    onConnect: vi.fn(),
+    onTest: vi.fn(),
+    onInspect: vi.fn(),
+    ...overrides
+  };
+  render(<NodeTable {...props} />);
+  return props;
+}
+
 describe("NodeTable", () => {
-  it("renders active state and all IPPure risk fields", () => {
-    render(
-      <NodeTable
-        nodes={[node]}
-        activeNodeId={node.id}
-        operations={{}}
-        busy={undefined}
-        onConnect={vi.fn()}
-        onTest={vi.fn()}
-      />
-    );
+  it("renders every IPPure risk field for a tested node", () => {
+    renderTable();
 
     expect(screen.getByText("Japan")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "已连接" })).toBeDisabled();
     expect(screen.getByRole("meter", { name: "欺诈分 7" })).toBeInTheDocument();
-    expect(screen.getByText("住宅出口")).toBeInTheDocument();
-    expect(screen.getByText("非广播网络")).toBeInTheDocument();
-    expect(screen.getByText("8.8.8.8")).toBeInTheDocument();
-    expect(screen.getByText(/420 ms/)).toBeInTheDocument();
+    expect(screen.getByText("住宅")).toBeInTheDocument();
+    expect(screen.getByText("非广播")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新检测" })).toBeEnabled();
   });
 
-  it("shows isolated progress without changing the connect action", () => {
-    render(
-      <NodeTable
-        nodes={[node]}
-        activeNodeId={undefined}
-        operations={{
-          [node.id]: {
-            id: "operation",
-            state: {
-              state: "running",
-              nodeId: node.id,
-              startedAt: "2026-07-22T00:00:00Z"
-            }
-          }
-        }}
-        busy={undefined}
-        onConnect={vi.fn()}
-        onTest={vi.fn()}
-      />
-    );
+  it("disables connecting to the node that is already active", () => {
+    renderTable({ activeNodeId: node.id });
 
-    expect(screen.getAllByText("测试中").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "已连接" })).toBeDisabled();
+  });
+
+  it("shows isolated test progress without blocking the connect action", () => {
+    renderTable({
+      operations: {
+        [node.id]: {
+          id: "operation",
+          state: { state: "running", nodeId: node.id, startedAt: "2026-07-22T00:00:00Z" }
+        }
+      }
+    });
+
+    expect(screen.getByText("检测中")).toBeInTheDocument();
+    expect(screen.queryByRole("meter")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "连接" })).toBeEnabled();
   });
 
   it("marks an eligible node without data as awaiting automatic testing", () => {
     const untested = { ...node };
     delete untested.latestTest;
-    render(
-      <NodeTable
-        nodes={[untested]}
-        activeNodeId={undefined}
-        operations={{}}
-        busy={undefined}
-        onConnect={vi.fn()}
-        onTest={vi.fn()}
-      />
-    );
+    renderTable({ nodes: [untested] });
 
     expect(screen.getByText("等待自动检测")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "优先检测" })).toBeEnabled();
+  });
+
+  it("refuses to connect to a node this version cannot use", () => {
+    renderTable({ nodes: [{ ...node, availability: "unsupportedProtocol" }] });
+
+    expect(screen.getByRole("button", { name: "v1 不可用" })).toBeDisabled();
+  });
+
+  it("reports the sorted column and direction to assistive technology", () => {
+    renderTable({ sort: "fraud", order: "asc" });
+
+    expect(screen.getByRole("columnheader", { name: /IPPure 风险/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending"
+    );
+    expect(screen.getByRole("columnheader", { name: /延迟/ })).toHaveAttribute(
+      "aria-sort",
+      "none"
+    );
+  });
+
+  it("opens the detail view from the node name", () => {
+    const props = renderTable();
+
+    screen.getByRole("button", { name: /vpn.example/ }).click();
+
+    expect(props.onInspect).toHaveBeenCalledWith(node);
   });
 });

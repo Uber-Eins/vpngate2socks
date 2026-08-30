@@ -1,28 +1,116 @@
+/*
+ * Design tokens. The theme is resolved to a concrete `data-theme` attribute in
+ * JavaScript (including the "system" case) so the stylesheet only ever needs the
+ * two palettes below.
+ */
+
 :root {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans CJK SC",
+    "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Consolas,
+    "Liberation Mono", monospace;
+
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.8125rem;
+  --text-md: 0.875rem;
+  --text-lg: 1rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.625rem;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --rail-width: 232px;
+  --rail-width-compact: 68px;
+  --topbar-height: 56px;
+  --content-max: 1440px;
+
+  --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --duration: 140ms;
+}
+
+:root[data-theme="dark"] {
   color-scheme: dark;
-  font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
-  color: #edf3f1;
-  background: #080c0f;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  --background: #080c0f;
-  --surface: #0d1317;
-  --surface-raised: #111a1f;
-  --surface-hover: #152128;
-  --surface-soft: #0a1014;
-  --line: #223038;
-  --line-strong: #34464f;
-  --text: #edf3f1;
-  --text-soft: #b6c3c0;
-  --muted: #7e908d;
-  --accent: #8ce0ba;
-  --accent-strong: #b3f3d5;
-  --accent-ink: #06150f;
-  --blue: #77bcea;
-  --warning: #e5b566;
-  --danger: #f28a8a;
-  --danger-soft: #2a1619;
-  --success-soft: #10241d;
-  --shadow: 0 22px 70px rgb(0 0 0 / 28%);
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+
+  --canvas: #0a0d10;
+  --surface: #12171c;
+  --surface-raised: #171d23;
+  --surface-sunken: #0d1216;
+  --surface-hover: #1c242b;
+  --border: #232c34;
+  --border-strong: #33414c;
+
+  --text: #e7edf3;
+  --text-muted: #9dabb7;
+  --text-faint: #6d7c88;
+
+  --accent: #3ddc97;
+  --accent-hover: #58e7a9;
+  --accent-ink: #05221a;
+  --accent-soft: rgb(61 220 151 / 12%);
+  --accent-line: rgb(61 220 151 / 34%);
+
+  --info: #74b3ff;
+  --info-soft: rgb(116 179 255 / 12%);
+  --warning: #f0c261;
+  --warning-soft: rgb(240 194 97 / 12%);
+  --danger: #ff7b7b;
+  --danger-hover: #ff9494;
+  --danger-soft: rgb(255 123 123 / 12%);
+  --danger-ink: #2a0f11;
+
+  --track: #222b33;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 40%);
+  --shadow-md: 0 8px 24px -8px rgb(0 0 0 / 60%);
+  --shadow-lg: 0 24px 60px -12px rgb(0 0 0 / 70%);
+  --scrim: rgb(4 7 9 / 68%);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --canvas: #f4f6f8;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef1f4;
+  --surface-hover: #f1f4f7;
+  --border: #dde3e9;
+  --border-strong: #c3ccd5;
+
+  --text: #131b23;
+  --text-muted: #566573;
+  --text-faint: #7c8895;
+
+  --accent: #0e9e6b;
+  --accent-hover: #0b8a5d;
+  --accent-ink: #ffffff;
+  --accent-soft: rgb(14 158 107 / 10%);
+  --accent-line: rgb(14 158 107 / 30%);
+
+  --info: #1f6feb;
+  --info-soft: rgb(31 111 235 / 9%);
+  --warning: #a86a10;
+  --warning-soft: rgb(168 106 16 / 10%);
+  --danger: #ce2a37;
+  --danger-hover: #b21f2b;
+  --danger-soft: rgb(206 42 55 / 9%);
+  --danger-ink: #ffffff;
+
+  --track: #e3e8ed;
+  --shadow-sm: 0 1px 2px rgb(16 24 32 / 8%);
+  --shadow-md: 0 8px 24px -10px rgb(16 24 32 / 20%);
+  --shadow-lg: 0 24px 60px -16px rgb(16 24 32 / 28%);
+  --scrim: rgb(20 28 36 / 42%);
 }

@@ -22,8 +22,9 @@ use crate::{
     automatic_tests::{AutomaticTestCandidate, select_automatic_tests},
     config::AppConfig,
     domain::{
-        AppEvent, AutoConnectConfig, ConnectionState, NodeAvailability, NodeId, OperationId,
-        ResolvedUpstreamEndpoint, TestRecord, TestState, UpstreamState, VpnNode, WorkerId,
+        AppEvent, AutoConnectConfig, ConnectionState, NodeAvailability, NodeId, NodeSummary,
+        OperationId, ResolvedUpstreamEndpoint, TestRecord, TestState, UpstreamState, VpnNode,
+        WorkerId,
     },
     netd::{NetdClient, NetdClientError},
     quality::fetch_ippure,
@@ -114,6 +115,10 @@ pub struct RefreshInfo {
 #[serde(rename_all = "camelCase")]
 pub struct StatusSnapshot {
     pub connection: ConnectionState,
+    /// Full public view of the node named by `connection`, so the UI can show the
+    /// active exit without it happening to be on the currently browsed node page.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active_node: Option<NodeSummary>,
     pub proxy_ready: bool,
     pub queued_tests: usize,
     pub running_tests: usize,
@@ -469,8 +474,10 @@ impl AppState {
         let last_refresh = self.0.last_refresh.read().await.clone();
         let connection = self.0.connection_state.borrow().clone();
         let proxy_ready = self.0.active_worker.borrow().is_some();
+        let active_node = self.active_node(&connection).await;
         StatusSnapshot {
             connection,
+            active_node,
             proxy_ready,
             queued_tests: self.0.queued_tests.load(Ordering::Relaxed),
             running_tests: self.0.running_tests.load(Ordering::Relaxed),
@@ -479,6 +486,24 @@ impl AppState {
             lan_mode: self.0.config.lan_mode,
             tls_configured: self.0.config.tls.is_some(),
         }
+    }
+
+    /// Resolves the node a connection state points at into its public summary.
+    ///
+    /// A node can disappear from the snapshot between a refresh and this call, so a
+    /// missing entry is reported as no active node rather than as an error.
+    async fn active_node(&self, connection: &ConnectionState) -> Option<NodeSummary> {
+        let node_id = connection.node_id()?;
+        let node = self
+            .0
+            .nodes
+            .read()
+            .await
+            .iter()
+            .find(|node| &node.id == node_id)
+            .cloned()?;
+        let latest_test = self.0.store.latest_test(node_id).await.unwrap_or_default();
+        Some(node.summary(latest_test))
     }
 
     /// Verifies that the helper and persistent store can serve requests.

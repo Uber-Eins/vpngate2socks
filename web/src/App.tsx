@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 
 import * as api from "./api";
+import { Console } from "./app/Console";
 import { Login } from "./auth/Login";
-import { Dashboard } from "./dashboard/Dashboard";
+// Imported for its side effect: resolves and applies the stored theme to <html>.
+import "./state/useTheme";
 import type { SessionState } from "./types";
 import { LoadingScreen } from "./ui/LoadingScreen";
 import { errorMessage } from "./utils/errorMessage";
@@ -24,5 +26,5 @@ export function App() {
   if (!session.authenticated) {
     return <Login onAuthenticated={setSession} />;
   }
-  return <Dashboard session={session} onLoggedOut={() => setSession({ authenticated: false })} />;
+  return <Console session={session} onLoggedOut={() => setSession({ authenticated: false })} />;
 }

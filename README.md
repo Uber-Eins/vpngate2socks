@@ -78,6 +78,7 @@ podman run --rm \
 - 切换采用 make-before-break：新 worker 到达 OpenVPN `CONNECTED,SUCCESS` 后才原子替换 relay，旧 worker 排空 30 秒。新连接失败时旧节点保持活动。
 - 可用节点没有持久化的 IPPure 结果时会自动进入有界测试队列；高评分、低 Ping 节点优先。失败记录视为一次已完成检测，避免故障节点无限重试，可从 WebUI 手动重新检测。
 - 测试队列默认最多并行 3 个。每个测试使用临时 worker，经其 SOCKS5 以远端 DNS 请求 IPPure，不会修改活动 relay；手动与自动请求会按节点去重。
+- WebUI 的节点列表可按地区、IPPure 分类、可用性在服务端筛选，并按评分、Ping、带宽、会话数或欺诈分排序。
 
 ## 自动连接
 
@@ -90,7 +91,7 @@ podman run --rm \
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
-| `GET` | `/api/v1/nodes` | 分页、搜索、排序和最近测试 |
+| `GET` | `/api/v1/nodes` | 分页、搜索、筛选、排序和最近测试 |
 | `POST` | `/api/v1/nodes/refresh` | 手动刷新 |
 | `PUT` / `DELETE` | `/api/v1/connection` | 切换 / 断开 |
 | `GET` / `PUT` | `/api/v1/auto-connection` | 读取 / 更新自动连接策略与地区选项 |
@@ -99,6 +100,10 @@ podman run --rm \
 | `GET` | `/api/v1/status` | relay、队列、刷新和 helper 状态 |
 | `GET` | `/api/v1/events` | SSE 事件 |
 | `GET` | `/healthz`, `/readyz` | liveness / readiness |
+
+`GET /api/v1/nodes` 接受 `page`、`pageSize`、`search`、`region`、`ipType`、`residential`、`availability`、`sort`（`score` / `ping` / `speed` / `sessions` / `fraud`）与 `order`。`ipType` 与 `residential` 的语义同自动连接策略：只要不是 `any`，就只保留已有成功 IPPure 结果的节点。按 `ping` 或 `fraud` 排序时，缺少该测量值的节点在两个方向上都排在最后。
+
+`GET /api/v1/status` 在存在活动（或失败）连接时附带 `activeNode`，即该节点的完整公开视图，WebUI 无需在当前节点页中找到它即可展示当前出口。
 
 SOCKS5 v1 支持 `CONNECT`、IPv4 和域名；拒绝 `BIND`、`UDP ASSOCIATE`、IPv6、回环、链路本地、私网、文档网段和解析到这些地址的域名。
 
@@ -124,6 +129,14 @@ npm --prefix web ci
 npm --prefix web run typecheck
 npm --prefix web test
 npm --prefix web run build
+```
+
+只改 WebUI 时不必启动控制面。下面的命令会在浏览器内挂载一个开发用的控制面替身（假节点、假状态、假 SSE），并把它排除在生产构建之外：
+
+```bash
+npm --prefix web run dev:mock
+# http://127.0.0.1:5173        已登录的控制台
+# http://127.0.0.1:5173/?login 登录页
 ```
 
 rootless namespace/TUN/nftables 冒烟测试：

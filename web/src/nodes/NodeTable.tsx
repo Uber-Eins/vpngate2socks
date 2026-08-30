@@ -1,117 +1,171 @@
 import { zhCN as t } from "../i18n";
-import type { TestOperations, VpnNode } from "../types";
-import { formatBits } from "../utils/formatBits";
-import { RiskSummary } from "./RiskSummary";
+import type { SortKey, SortOrder, TestOperations, VpnNode } from "../types";
+import { Button } from "../ui/Button";
+import { EmptyState, Skeleton } from "../ui/Feedback";
+import { ArrowDownIcon, ArrowUpIcon, SearchIcon } from "../ui/Icon";
+import { cx } from "../utils/cx";
+import { formatBits } from "../utils/format";
+import { RiskCell } from "./RiskCell";
 
-export function NodeTable(props: {
+export interface NodeTableProps {
   nodes: VpnNode[];
   activeNodeId: string | undefined;
   operations: TestOperations;
   busy: string | undefined;
+  loading: boolean;
+  sort: SortKey;
+  order: SortOrder;
+  onSort: (key: SortKey) => void;
   onConnect: (nodeId: string) => void;
   onTest: (nodeId: string) => void;
-}) {
-  if (props.nodes.length === 0) {
+  onInspect: (node: VpnNode) => void;
+}
+
+export function NodeTable(props: NodeTableProps) {
+  if (props.loading && props.nodes.length === 0) {
     return (
-      <div className="empty-state">
-        <span aria-hidden="true" />
-        <strong>{t.empty}</strong>
-        <p>尝试更换关键词，或刷新 VPN Gate 节点快照。</p>
+      <div className="empty">
+        <div className="skeleton-stack" aria-label={t.loadingNodes}>
+          <Skeleton />
+          <Skeleton />
+          <Skeleton width="half" />
+        </div>
       </div>
     );
   }
 
+  if (props.nodes.length === 0) {
+    return (
+      <EmptyState
+        icon={<SearchIcon size={26} />}
+        title={t.emptyTitle}
+        description={t.emptyHint}
+      />
+    );
+  }
+
+  const header = (key: SortKey, label: string, className?: string) => (
+    <SortHeader
+      label={label}
+      className={className}
+      active={props.sort === key}
+      order={props.order}
+      onSort={() => props.onSort(key)}
+    />
+  );
+
   return (
-    <div className="node-table-wrap">
-      <table className="node-table">
+    <div className="table-scroll">
+      <table className="table">
         <thead>
           <tr>
-            <th>{t.node}</th>
-            <th>{t.region}</th>
-            <th>{t.quality}</th>
-            <th className="optional-column">{t.sessions}</th>
-            <th>{t.risk}</th>
-            <th>{t.actions}</th>
+            <th scope="col">{t.columnNode}</th>
+            <th scope="col" className="optional-md">{t.columnRegion}</th>
+            {header("score", t.score, "col-num optional-sm")}
+            {header("ping", t.columnPing, "col-num")}
+            {header("speed", t.columnSpeed, "col-num")}
+            {header("sessions", t.columnSessions, "col-num optional-sm")}
+            {header("fraud", t.columnRisk)}
+            <th scope="col" className="col-num">{t.columnActions}</th>
           </tr>
         </thead>
         <tbody>
-          {props.nodes.map((node) => {
-            const operation = props.operations[node.id]?.state;
-            const active = props.activeNodeId === node.id;
-            const eligible = node.availability === "available";
-            const testing = operation?.state === "queued" || operation?.state === "running";
-            const testLabel = operation?.state === "queued"
-              ? t.queued
-              : operation?.state === "running"
-                ? t.running
-                : node.latestTest === undefined
-                  ? t.prioritizeTest
-                  : t.retest;
-            return (
-              <tr key={node.id} className={active ? "node-row node-row--active" : "node-row"}>
-                <td>
-                  <div className="node-identity">
-                    <span className="country-code">{node.countryShort}</span>
-                    <div>
-                      <strong>{node.hostname}</strong>
-                      <code>{node.ip}:{node.tcpPort ?? "—"}</code>
-                    </div>
-                    {active && <span className="active-badge">ACTIVE</span>}
-                  </div>
-                </td>
-                <td>
-                  <div className="region-cell">
-                    <strong>{node.countryLong}</strong>
-                    <span title={node.operator}>{node.operator || "未知运营者"}</span>
-                  </div>
-                </td>
-                <td>
-                  <div className="quality-cell">
-                    <strong>{node.pingMs === null ? "—" : `${node.pingMs} ms`}</strong>
-                    <span>{formatBits(node.speedBps)}</span>
-                    <small>Score {node.score.toLocaleString()}</small>
-                  </div>
-                </td>
-                <td className="optional-column">
-                  <div className="sessions-cell">
-                    <strong>{node.sessions}</strong>
-                    <span>累计 {node.totalUsers.toLocaleString()}</span>
-                  </div>
-                </td>
-                <td className="risk-cell">
-                  <RiskSummary record={node.latestTest} operation={operation} eligible={eligible} />
-                </td>
-                <td>
-                  <div className="row-actions">
-                    <button
-                      className={active ? "button button--connected" : "button button--primary"}
-                      type="button"
-                      disabled={!eligible || props.busy !== undefined || active}
-                      onClick={() => props.onConnect(node.id)}
-                    >
-                      {active
-                        ? t.connected
-                        : !eligible
-                          ? t.unavailable
-                          : props.busy === `connect:${node.id}`
-                            ? t.connecting
-                            : t.connect}
-                    </button>
-                    <button
-                      className="button button--quiet"
-                      type="button"
-                      disabled={!eligible || props.busy !== undefined || testing}
-                      onClick={() => props.onTest(node.id)}
-                    >
-                      {props.busy === `test:${node.id}` ? "提交中…" : testLabel}
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
+          {props.nodes.map((node) => (
+            <NodeRow key={node.id} node={node} {...props} />
+          ))}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function NodeRow({ node, activeNodeId, operations, busy, onConnect, onTest, onInspect }:
+  NodeTableProps & { node: VpnNode }) {
+  const operation = operations[node.id]?.state;
+  const active = activeNodeId === node.id;
+  const eligible = node.availability === "available";
+  const testing = operation?.state === "queued" || operation?.state === "running";
+  const testLabel = node.latestTest === undefined ? t.prioritizeTest : t.retest;
+
+  return (
+    <tr className={cx(active && "row--active")}>
+      <td>
+        <div className="node-cell">
+          <span className="country-chip">{node.countryShort}</span>
+          <span className="node-cell__text">
+            <button
+              type="button"
+              className="node-cell__name"
+              title={`${node.hostname} · ${t.details}`}
+              onClick={() => onInspect(node)}
+            >
+              {node.hostname}
+            </button>
+            <span className="node-cell__address">{node.ip}:{node.tcpPort ?? "—"}</span>
+          </span>
+        </div>
+      </td>
+      <td className="optional-md">
+        <span className="region-cell">
+          <strong>{node.countryLong}</strong>
+          <span title={node.operator}>{node.operator || t.operatorUnknown}</span>
+        </span>
+      </td>
+      <td className="col-num optional-sm">{node.score.toLocaleString("zh-CN")}</td>
+      <td className="col-num">{node.pingMs === null ? "—" : `${node.pingMs} ms`}</td>
+      <td className="col-num">{formatBits(node.speedBps)}</td>
+      <td className="col-num optional-sm">{node.sessions}</td>
+      <td>
+        <RiskCell record={node.latestTest} operation={operation} eligible={eligible} />
+      </td>
+      <td>
+        <div className="row-actions">
+          <Button
+            variant={active || !eligible ? "default" : "primary"}
+            size="sm"
+            disabled={!eligible || busy !== undefined || active}
+            busy={busy === `connect:${node.id}`}
+            onClick={() => onConnect(node.id)}
+          >
+            {active ? t.connected : eligible ? t.connect : t.unavailableInV1}
+          </Button>
+          <Button
+            size="sm"
+            disabled={!eligible || busy !== undefined || testing}
+            busy={busy === `test:${node.id}`}
+            onClick={() => onTest(node.id)}
+          >
+            {testLabel}
+          </Button>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function SortHeader({ label, className, active, order, onSort }: {
+  label: string;
+  className?: string | undefined;
+  active: boolean;
+  order: SortOrder;
+  onSort: () => void;
+}) {
+  return (
+    <th
+      scope="col"
+      className={className}
+      aria-sort={active ? (order === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        className={cx("sort-button", active && "sort-button--active")}
+        onClick={onSort}
+      >
+        {label}
+        <span className="sort-button__arrow">
+          {order === "asc" ? <ArrowUpIcon size={12} /> : <ArrowDownIcon size={12} />}
+        </span>
+      </button>
+    </th>
   );
 }

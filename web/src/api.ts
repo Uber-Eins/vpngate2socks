@@ -3,6 +3,7 @@ import type {
   AutoConnectConfig,
   AutoConnectSettings,
   ConnectionState,
+  NodeQuery,
   NodesPage,
   SessionState,
   StatusSnapshot,
@@ -73,20 +74,22 @@ export async function logout(): Promise<void> {
   csrfToken = undefined;
 }
 
-export function nodes(params: {
-  page: number;
-  pageSize: number;
-  search: string;
-  sort: string;
-  order: string;
-}): Promise<NodesPage> {
+export function nodes(
+  params: NodeQuery & { page: number; pageSize: number }
+): Promise<NodesPage> {
   const query = new URLSearchParams({
     page: String(params.page),
     pageSize: String(params.pageSize),
     search: params.search,
     sort: params.sort,
-    order: params.order
+    order: params.order,
+    ipType: params.ipType,
+    residential: params.residential,
+    availability: params.availability
   });
+  if (params.region !== "") {
+    query.set("region", params.region);
+  }
   return request(`/api/v1/nodes?${query.toString()}`);
 }
 

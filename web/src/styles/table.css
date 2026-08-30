@@ -1,0 +1,400 @@
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  gap: var(--space-3);
+}
+
+.filters__group {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: var(--space-3);
+}
+
+.filters__group--grow {
+  flex: 1 1 260px;
+}
+
+.filters .field {
+  min-width: 132px;
+}
+
+/*
+ * Deliberately not pushed to the far end with an auto margin: once the bar wraps
+ * that would strand the reset button alone on its own row.
+ */
+.filters__reset {
+  flex: 0 0 auto;
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-sunken);
+  gap: var(--space-2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-1) 0 var(--space-2);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-pill);
+  background: var(--accent-soft);
+  block-size: 22px;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  gap: var(--space-1);
+}
+
+.chip button {
+  display: grid;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  block-size: 16px;
+  color: inherit;
+  cursor: pointer;
+  inline-size: 16px;
+  place-items: center;
+}
+
+.chip button:hover {
+  background: var(--accent-line);
+}
+
+/* --------------------------------------------------------------- table --- */
+
+/*
+ * No overflow here on purpose: an `overflow-x` wrapper would become the nearest
+ * scroll container and `position: sticky` on the header would stop working. The
+ * scrolling ancestor stays `.content`, which the sticky header anchors to.
+ */
+.table {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-base);
+}
+
+.table th,
+.table td {
+  padding: var(--space-3) var(--space-4);
+  text-align: start;
+  vertical-align: middle;
+}
+
+.table thead th {
+  position: sticky;
+  z-index: 1;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  inset-block-start: 0;
+  white-space: nowrap;
+}
+
+.table tbody td {
+  border-bottom: 1px solid var(--border);
+}
+
+.table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.table tbody tr:hover td {
+  background: var(--surface-hover);
+}
+
+.table tbody tr.row--active td {
+  background: var(--accent-soft);
+}
+
+.table .col-num {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.table th.col-num .sort-button {
+  flex-direction: row-reverse;
+}
+
+.sort-button {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  gap: var(--space-1);
+}
+
+.sort-button:hover {
+  color: var(--text);
+}
+
+.sort-button--active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sort-button__arrow {
+  color: var(--accent);
+  opacity: 0;
+}
+
+.sort-button--active .sort-button__arrow {
+  opacity: 1;
+}
+
+.sort-button:hover .sort-button__arrow {
+  opacity: 0.5;
+}
+
+.sort-button--active:hover .sort-button__arrow {
+  opacity: 1;
+}
+
+/* ----------------------------------------------------------- row cells --- */
+
+.node-cell {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.node-cell__text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.node-cell__name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-align: start;
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--duration) var(--ease);
+}
+
+.node-cell__name:hover {
+  text-decoration-color: var(--text-faint);
+}
+
+.node-cell__address {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.region-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.region-cell strong {
+  font-weight: 500;
+}
+
+.region-cell span {
+  overflow: hidden;
+  max-width: 15ch;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* One shared minimum keeps rows the same height whether a node has results yet. */
+.risk-cell,
+.risk-cell__pending,
+.risk-cell__error {
+  min-block-size: 44px;
+}
+
+.risk-cell {
+  display: flex;
+  min-width: 104px;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-1);
+}
+
+.risk-cell__score {
+  font-size: var(--text-md);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.risk-cell__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.risk-cell__pending {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  gap: var(--space-2);
+}
+
+.risk-cell__untested {
+  display: flex;
+  align-items: center;
+  color: var(--text-faint);
+  font-size: var(--text-sm);
+  min-block-size: 44px;
+}
+
+.risk-cell__error {
+  display: flex;
+  overflow: hidden;
+  max-width: 22ch;
+  align-items: center;
+  color: var(--danger);
+  font-size: var(--text-sm);
+  gap: var(--space-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
+/* ---------------------------------------------------------- pagination --- */
+
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  gap: var(--space-3);
+}
+
+.pagination__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.pagination__position {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------- empty and loading --- */
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-10) var(--space-4);
+  color: var(--text-muted);
+  gap: var(--space-2);
+  text-align: center;
+}
+
+.empty__icon {
+  color: var(--text-faint);
+}
+
+.empty strong {
+  color: var(--text);
+  font-size: var(--text-md);
+}
+
+.empty p {
+  max-width: 44ch;
+  font-size: var(--text-sm);
+}
+
+.skeleton {
+  border-radius: var(--radius-sm);
+  animation: shimmer 1.4s var(--ease) infinite;
+  background: var(--track);
+  block-size: 12px;
+}
+
+@keyframes shimmer {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.skeleton--wide {
+  inline-size: 100%;
+}
+
+.skeleton--half {
+  inline-size: 55%;
+}
+
+.skeleton--short {
+  inline-size: 30%;
+}
+
+.skeleton-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/*
+ * Breakpoints come from the table's measured intrinsic width with each column set
+ * (975px with every column, 843px without the region column, 681px with neither
+ * the region, score nor session columns) plus the 232px rail and 40px gutters.
+ */
+@media (width <= 1260px) {
+  .table .optional-md {
+    display: none;
+  }
+}
+
+@media (width <= 1120px) {
+  .table .optional-sm {
+    display: none;
+  }
+}
+
+@media (width <= 1000px) {
+  .table th,
+  .table td {
+    padding: var(--space-3) var(--space-2);
+  }
+
+  .filters .field {
+    min-width: 120px;
+  }
+}

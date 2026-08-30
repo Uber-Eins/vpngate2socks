@@ -1,0 +1,112 @@
+/* Login and startup screens: the only views rendered outside the app shell. */
+
+.entry {
+  display: grid;
+  min-height: 100%;
+  padding: var(--space-6);
+  place-items: center;
+}
+
+.entry__card {
+  display: grid;
+  overflow: hidden;
+  width: min(880px, 100%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.entry__aside {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-8);
+  border-inline-end: 1px solid var(--border);
+  background: var(--surface-sunken);
+  gap: var(--space-4);
+}
+
+.entry__aside h1 {
+  font-size: var(--text-2xl);
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+
+.entry__aside p {
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  line-height: 1.7;
+}
+
+.entry__points {
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+}
+
+.entry__point {
+  display: flex;
+  align-items: flex-start;
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  gap: var(--space-2);
+  line-height: 1.6;
+}
+
+.entry__point svg {
+  color: var(--accent);
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.entry__form {
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-8);
+  gap: var(--space-4);
+}
+
+.entry__form h2 {
+  font-size: var(--text-lg);
+}
+
+.entry__form-hint {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin-top: 2px;
+}
+
+.entry__error {
+  color: var(--danger);
+  font-size: var(--text-sm);
+}
+
+.entry__status {
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+  gap: var(--space-3);
+}
+
+@media (width <= 760px) {
+  .entry__card {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .entry__aside {
+    border-inline-end: 0;
+    border-block-end: 1px solid var(--border);
+    padding: var(--space-6);
+  }
+
+  .entry__points {
+    display: none;
+  }
+
+  .entry__form {
+    padding: var(--space-6);
+  }
+}

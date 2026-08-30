@@ -48,6 +48,25 @@ export interface NodesPage {
 
 export type IpTypeFilter = "any" | "native" | "broadcast";
 export type ResidentialFilter = "any" | "residential" | "nonResidential";
+export type AvailabilityFilter = "any" | "available";
+
+/** Column the node list is ordered by; mirrors the server `sort` parameter. */
+export type SortKey = "score" | "ping" | "speed" | "sessions" | "fraud";
+export type SortOrder = "asc" | "desc";
+
+/**
+ * Everything the node list sends to `GET /api/v1/nodes` except the page number.
+ * An empty `region` means "any region" and is omitted from the request.
+ */
+export interface NodeQuery {
+  search: string;
+  region: string;
+  ipType: IpTypeFilter;
+  residential: ResidentialFilter;
+  availability: AvailabilityFilter;
+  sort: SortKey;
+  order: SortOrder;
+}
 
 export interface AutoConnectConfig {
   enabled: boolean;
@@ -85,12 +104,21 @@ export interface TestOperation {
 
 export type TestOperations = Record<string, TestOperation>;
 
+export type UpstreamState =
+  | "checking"
+  | "ready"
+  | "unreachable"
+  | "authenticationFailed"
+  | "netdUnavailable";
+
 export interface StatusSnapshot {
   connection: ConnectionState;
+  /** Full node behind `connection`, sent by the server so it need not be on screen. */
+  activeNode?: VpnNode;
   proxyReady: boolean;
   queuedTests: number;
   runningTests: number;
-  upstreamState: "checking" | "ready" | "unreachable" | "authenticationFailed" | "netdUnavailable";
+  upstreamState: UpstreamState;
   lastRefresh?: {
     at: string;
     accepted: number;
@@ -124,5 +152,5 @@ export type AppEvent =
   | { type: "refreshFailed"; data: { message: string; at: string } }
   | {
       type: "upstream";
-      data: { state: StatusSnapshot["upstreamState"]; at: string };
+      data: { state: UpstreamState; at: string };
     };
