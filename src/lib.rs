@@ -5,6 +5,7 @@ mod auto_connect;
 mod automatic_tests;
 pub mod config;
 pub mod domain;
+mod mihomo;
 pub mod netd;
 pub mod openvpn;
 pub mod quality;

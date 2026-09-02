@@ -93,6 +93,7 @@ podman run --rm \
 |---|---|---|
 | `GET` | `/api/v1/nodes` | 分页、搜索、筛选、排序和最近测试 |
 | `POST` | `/api/v1/nodes/refresh` | 手动刷新 |
+| `GET` | `/api/v1/mihomo/provider.yaml` | 导出 Mihomo OpenVPN proxy-provider |
 | `PUT` / `DELETE` | `/api/v1/connection` | 切换 / 断开 |
 | `GET` / `PUT` | `/api/v1/auto-connection` | 读取 / 更新自动连接策略与地区选项 |
 | `POST` | `/api/v1/nodes/{nodeId}/tests` | 排队隔离测试 |
@@ -102,6 +103,8 @@ podman run --rm \
 | `GET` | `/healthz`, `/readyz` | liveness / readiness |
 
 `GET /api/v1/nodes` 接受 `page`、`pageSize`、`search`、`region`、`ipType`、`residential`、`availability`、`sort`（`score` / `ping` / `speed` / `sessions` / `fraud`）与 `order`。`ipType` 与 `residential` 的语义同自动连接策略：只要不是 `any`，就只保留已有成功 IPPure 结果的节点。按 `ping` 或 `fraud` 排序时，缺少该测量值的节点在两个方向上都排在最后。
+
+`GET /api/v1/mihomo/provider.yaml` 将当前快照中的全部 Mihomo 兼容 TCP OpenVPN 节点导出为 `proxy-provider` YAML。该接口不读取或触发 IPPure 检测，也不执行质量筛选；上游 SOCKS5 应由 Mihomo 主配置通过 provider `override.dialer-proxy` 注入。
 
 `GET /api/v1/status` 在存在活动（或失败）连接时附带 `activeNode`，即该节点的完整公开视图，WebUI 无需在当前节点页中找到它即可展示当前出口。
 

@@ -126,6 +126,7 @@ pub fn router(app: AppState) -> Router {
     let protected = Router::new()
         .route("/nodes", get(list_nodes))
         .route("/nodes/refresh", post(refresh_nodes))
+        .route("/mihomo/provider.yaml", get(mihomo_provider))
         .route("/connection", put(connect).delete(disconnect))
         .route(
             "/auto-connection",
@@ -313,6 +314,22 @@ async fn list_nodes(
         page_size: query.page_size,
         total,
     }))
+}
+
+async fn mihomo_provider(State(state): State<ApiState>) -> Response {
+    let nodes = state.app.nodes().await;
+    let body = crate::mihomo::render_provider(&nodes);
+    (
+        [
+            (
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("application/yaml; charset=utf-8"),
+            ),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-store")),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 fn compare_nodes(
@@ -685,6 +702,28 @@ mod tests {
             value.get("lastRefresh").is_none(),
             "an unavailable refresh must be omitted instead of serialized as null"
         );
+
+        let provider = router
+            .clone()
+            .oneshot(
+                Request::get("/api/v1/mihomo/provider.yaml")
+                    .body(Body::empty())
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(provider.status(), StatusCode::OK);
+        assert_eq!(
+            provider.headers().get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/yaml; charset=utf-8"))
+        );
+        let body = provider
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        assert_eq!(body.as_ref(), b"proxies: []\n");
 
         let nodes = router
             .oneshot(
